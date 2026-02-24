@@ -1,0 +1,538 @@
+===== ./app/api/__init__.py =====
+
+===== ./app/api/jobs.py =====
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.schemas.job_create import JobCreate
+from app.api.schemas.job_response import JobResponse
+from app.db.models.job import Job
+from app.db.models.status import Status
+from app.db.session import get_db
+
+router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+@router.post("", response_model=JobResponse)
+async def create_job(
+        payload: JobCreate,
+        db: AsyncSession = Depends(get_db)
+):
+    job = Job(
+        status=Status.PENDING,
+        seed_urls=payload.seed_urls,
+        max_depth=payload.max_depth
+    )
+
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    return job
+
+@router.get("/{job_id}", response_model=JobResponse)
+async def get_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Job).where(Job.id == job_id)
+    )
+
+    job = result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return job
+===== ./app/api/schemas/__init__.py =====
+
+===== ./app/api/schemas/job_create.py =====
+from typing import List
+
+from pydantic import BaseModel
+
+
+class JobCreate(BaseModel):
+    seed_urls: List[str]
+    max_depth: int = 2
+===== ./app/api/schemas/job_response.py =====
+from datetime import datetime
+from typing import List
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+class JobResponse(BaseModel):
+    id: UUID
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    claimed_by: Optional[str]
+    claimed_at: Optional[datetime]
+    heartbeat_at: Optional[datetime]
+
+    seed_urls: List[str]
+    max_depth: int
+
+    pages_fetched: int
+    pages_queued: int
+
+    attempt_count: int
+    last_error: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+===== ./app/api/schemas/page_response.py =====
+from datetime import datetime
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict
+
+
+class PageResponse(BaseModel):
+    id: UUID
+    job_id: UUID
+    url: str
+    depth: int
+    status: str
+    discovered_at: datetime
+    created_at: datetime
+    error: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+===== ./app/api/pages.py =====
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.schemas.page_response import PageResponse
+from app.db.session import get_db
+from app.db.models.page import Page
+
+router = APIRouter(prefix="/pages", tags=["pages"])
+
+
+@router.get("/{job_id}", response_model=list[PageResponse])
+async def get_pages(job_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Page).where(Page.job_id == job_id)
+    )
+
+    pages = result.scalars().all()
+
+    if not pages:
+        raise HTTPException(status_code=404, detail="Page(s) not found")
+
+    return [PageResponse.model_validate(p) for p in pages]
+
+===== ./app/db/__init__.py =====
+
+===== ./app/db/session.py =====
+from typing import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    async_sessionmaker,
+    AsyncSession
+)
+
+from app.config import DATABASE_URL
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False
+)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    expire_on_commit=False
+)
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+===== ./app/db/models/__init__.py =====
+from app.db.models.job import Job
+from app.db.models.page import Page
+
+__all__ = ["Job", "Page"]
+
+===== ./app/db/models/job.py =====
+import uuid
+
+from sqlalchemy import (
+    Column,
+    String,
+    Integer,
+    DateTime,
+    Text,
+    Enum,
+    func
+)
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+
+from app.db.models.base import Base
+from app.db.models.status import Status
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status = Column(Enum(Status, native_enum=False), nullable=False, server_default=Status.PENDING)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    claimed_by = Column(String, nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+
+    seed_urls = Column(JSONB, nullable=False)
+    max_depth = Column(Integer, nullable=False)
+
+    pages_fetched = Column(Integer, default=0)
+    pages_queued = Column(Integer, default=0)
+
+    attempt_count = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)
+
+    pages = relationship("Page", back_populates="job", cascade="all, delete-orphan")
+
+===== ./app/db/models/page.py =====
+import uuid
+
+from sqlalchemy import (
+    Column,
+    Integer,
+    DateTime,
+    Text,
+    Enum,
+    ForeignKey,
+    func,
+    UniqueConstraint
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+
+from app.db.models.base import Base
+from app.db.models.status import Status
+
+
+class Page(Base):
+    __tablename__ = "pages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('jobs.id', ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    url = Column(Text, nullable=False)
+
+    depth = Column(Integer, nullable=False)
+
+    status = Column(Enum(Status, native_enum=False), nullable=False, server_default=Status.PENDING)
+
+    discovered_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "url", name="uq_job_url"),
+    )
+
+    job = relationship("Job", back_populates="pages")
+
+===== ./app/db/models/status.py =====
+import enum
+
+
+class Status(str, enum.Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+===== ./app/db/models/base.py =====
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+===== ./app/main.py =====
+import asyncio
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from sqlalchemy import text
+
+from app.api.jobs import router as jobs_router
+from app.api.pages import router as pages_router
+from app.db.models.base import Base
+from app.db.session import AsyncSessionLocal
+from app.db.session import engine
+
+MAX_RETRIES = 10
+RETRY_DELAY = 2
+
+async def wait_for_db():
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("SELECT 1"))
+            print("Database ready.")
+            return
+        except Exception:
+            print(f"DB not ready (attempt {attempt + 1}...")
+            await asyncio.sleep(RETRY_DELAY)
+
+    raise Exception("Database never became ready.")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await wait_for_db()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
+app = FastAPI(lifespan=lifespan, title="Job API")
+app.include_router(jobs_router)
+app.include_router(pages_router)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+===== ./app/config.py =====
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+===== ./alembic/versions/87d654f1278f_initial.py =====
+"""initial
+
+Revision ID: 87d654f1278f
+Revises: 
+Create Date: 2026-02-17 13:19:08.675892
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+# revision identifiers, used by Alembic.
+revision: str = '87d654f1278f'
+down_revision: Union[str, Sequence[str], None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.create_table('jobs',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='jobstatus'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('claimed_by', sa.String(), nullable=True),
+    sa.Column('claimed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('heartbeat_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('seed_urls', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('max_depth', sa.Integer(), nullable=False),
+    sa.Column('pages_fetched', sa.Integer(), nullable=True),
+    sa.Column('pages_queued', sa.Integer(), nullable=True),
+    sa.Column('attempt_count', sa.Integer(), nullable=True),
+    sa.Column('last_error', sa.Text(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('pages',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('job_id', sa.UUID(), nullable=False),
+    sa.Column('url', sa.Text(), nullable=False),
+    sa.Column('depth', sa.Integer(), nullable=False),
+    sa.Column('status', sa.String(), nullable=False),
+    sa.Column('discovered_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('error', sa.Text(), nullable=True),
+    sa.ForeignKeyConstraint(['job_id'], ['jobs.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('job_id', 'url', name='uq_job_url')
+    )
+    op.create_index(op.f('ix_pages_job_id'), 'pages', ['job_id'], unique=False)
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_index(op.f('ix_pages_job_id'), table_name='pages')
+    op.drop_table('pages')
+    op.drop_table('jobs')
+    # ### end Alembic commands ###
+
+===== ./alembic/versions/78199abe35b9_add_server_default_to_page_status.py =====
+"""add server default to page status
+
+Revision ID: 78199abe35b9
+Revises: 87d654f1278f
+Create Date: 2026-02-17 15:16:19.205690
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+# revision identifiers, used by Alembic.
+revision: str = '78199abe35b9'
+down_revision: Union[str, Sequence[str], None] = '87d654f1278f'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.alter_column('jobs', 'status',
+               existing_type=postgresql.ENUM('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='jobstatus'),
+               type_=sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='status'),
+               existing_nullable=False)
+    op.alter_column('pages', 'status',
+               existing_type=sa.VARCHAR(),
+               type_=sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='status'),
+               existing_nullable=False)
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.alter_column('pages', 'status',
+               existing_type=sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='status'),
+               type_=sa.VARCHAR(),
+               existing_nullable=False)
+    op.alter_column('jobs', 'status',
+               existing_type=sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='status'),
+               type_=postgresql.ENUM('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='jobstatus'),
+               existing_nullable=False)
+    # ### end Alembic commands ###
+
+===== ./alembic/env.py =====
+from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config
+from sqlalchemy import pool
+
+from alembic import context
+
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
+config = context.config
+
+# Interpret the config file for Python logging.
+# This line sets up loggers basically.
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# add your model's MetaData object here
+# for 'autogenerate' support
+# from myapp import mymodel
+# target_metadata = mymodel.Base.metadata
+from app.db.models import Base
+target_metadata = Base.metadata
+
+# other values from the config, defined by the needs of env.py,
+# can be acquired:
+# my_important_option = config.get_main_option("my_important_option")
+# ... etc.
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode.
+
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well.  By skipping the Engine creation
+    we don't even need a DBAPI to be available.
+
+    Calls to context.execute() here emit the given string to the
+    script output.
+
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode.
+
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, target_metadata=target_metadata
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+===== ./generate_openapi.py =====
+import json
+from app.main import app
+
+with open("openapi.json", "w") as f:
+    json.dump(app.openapi(), f, indent=2)
+
