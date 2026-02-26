@@ -13,18 +13,22 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 class CrawlerService(private val client: HttpClient) {
+    companion object {
+        private const val DOMAIN_DELAY_MS = 2000L
+        private const val MAX_RETRIES = 5
+        private const val INITIAL_BACK_OFF_MS = 2000L
+        private const val MAX_BACKOFF_MS = 60_000L
+    }
+
+    private val robotsService = RobotsService(client)
     private val globalLimiter = Semaphore(5)
     private val domainLimiters = ConcurrentHashMap<String, DomainThrottle>()
-    private val DOMAIN_DELAY_MS = 2000L
-    private val MAX_RETRIES = 5
-    private val INITIAL_BACK_OFF_MS = 2000L
-    private val MAX_BACKOFF_MS = 60_000L
 
-    suspend fun crawl(seedUrls: List<String>, maxDepth: Int) {
-        for (url in seedUrls) {
-            crawlSingle(url, 0 , maxDepth)
-        }
-    }
+//    suspend fun crawl(seedUrls: List<String>, maxDepth: Int) {
+//        for (url in seedUrls) {
+//            crawlSingle(url, 0 , maxDepth)
+//        }
+//    }
 
     suspend fun crawlSingle(
         url: String,
@@ -32,6 +36,8 @@ class CrawlerService(private val client: HttpClient) {
         maxDepth: Int
     ): List<String> {
         if (depth > maxDepth) return emptyList()
+
+        if (!robotsService.isAllowed(url)) return emptyList()
 
         var attempt = 0
         var backoff = INITIAL_BACK_OFF_MS
@@ -83,10 +89,13 @@ class CrawlerService(private val client: HttpClient) {
         }
 
         limiter.mutex.withLock {
+            val crawlDelaySeconds = robotsService.getCrawlDelay(url)
+            val effectiveDelay = (crawlDelaySeconds?.times(1000)) ?: DOMAIN_DELAY_MS
+
             val now = System.currentTimeMillis()
             val elapsed = now - limiter.lastRequestTime
 
-            if (elapsed < DOMAIN_DELAY_MS) {
+            if (elapsed < effectiveDelay) {
                 delay(DOMAIN_DELAY_MS - elapsed)
             }
 
