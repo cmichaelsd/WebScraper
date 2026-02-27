@@ -13,28 +13,24 @@ repositories {
 
 dependencies {
     val ktorVersion = "2.3.8"
+    val coroutinesVersion = "1.8.1"
+    val koinVersion = "3.5.6"
 
     testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${coroutinesVersion}")
+    testImplementation("io.mockk:mockk:1.13.10")
+    testImplementation("io.insert-koin:koin-test:${koinVersion}")
 
-    // Ktor client core
+    // DI
+    implementation("io.insert-koin:koin-core:${koinVersion}")
+
+    // Ktor
     implementation("io.ktor:ktor-client-core:${ktorVersion}")
-
-    // Pick ONE engine (CIO is fine)
     implementation("io.ktor:ktor-client-cio:${ktorVersion}")
-
-    // Helpful extras
     implementation("io.ktor:ktor-client-content-negotiation:${ktorVersion}")
 
-    // Ktor openapi
-    implementation("io.ktor:ktor-server-openapi:${ktorVersion}")
-
-    // HTML parsing later
-    implementation("org.jsoup:jsoup:1.17.2")
-
-    // Logging (optional but useful)
+    // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
-
-
 
     // PSQL access
     implementation("org.postgresql:postgresql:42.7.3")
@@ -43,7 +39,7 @@ dependencies {
     implementation("com.zaxxer:HikariCP:5.1.0")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:${coroutinesVersion}")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }

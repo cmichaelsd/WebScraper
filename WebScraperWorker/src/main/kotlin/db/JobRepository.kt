@@ -5,6 +5,7 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import org.example.models.Job
 import org.example.services.CrawlerService
+import org.koin.java.KoinJavaComponent.getKoin
 import java.util.UUID
 
 object JobRepository {
@@ -54,11 +55,10 @@ object JobRepository {
 
     suspend fun processJob(
         job: Job,
-        workerId: String,
-        client: HttpClient
+        workerId: String
     ) {
         coroutineScope {
-            val crawler = CrawlerService(client)
+            val crawler: CrawlerService = getKoin().get()
 
             PageRepository.seedPages(job.id, job.seedUrls)
 

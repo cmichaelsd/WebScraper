@@ -1,22 +1,20 @@
 package org.example.services
 
-import io.ktor.client.HttpClient
-import io.ktor.client.request.get
-import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.example.util.RobotsRules
+import org.example.util.interfaces.RobotsFetcher
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
-class RobotsService(private val client: HttpClient) {
-    private val cache = ConcurrentHashMap<String, RobotsRules>()
+class RobotsService(private val fetcher: RobotsFetcher) {
+    private val cache = mutableMapOf<String, RobotsRules>()
     private val mutex = Mutex()
     private val userAgent = "WebScraperBot"
 
     suspend fun isAllowed(url: String): Boolean {
         val uri = URI(url)
-        val domain = uri.scheme + "://" + uri.host
+        val domain = uri.host ?: return true
         val path = uri.path ?: "/"
 
         val rules = getRules(domain) ?: return true
@@ -28,7 +26,7 @@ class RobotsService(private val client: HttpClient) {
 
     suspend fun getCrawlDelay(url: String): Long? {
         val uri = URI(url)
-        val domain = uri.scheme + "://" + uri.host
+        val domain = uri.host ?: return null
         val rules = getRules(domain)
         return rules?.crawlDelaySeconds
     }
@@ -40,11 +38,14 @@ class RobotsService(private val client: HttpClient) {
             cache[domain]?.let { return it }
 
             return try {
-                val robotsUrl = "$domain/robots.txt"
-                val response = client.get(robotsUrl)
-                val body = response.bodyAsText()
-                val rules = parseRobots(body)
-                cache[domain] = rules
+                val rules = fetcher.fetchRobots(domain)?.let {
+                    parseRobots(it)
+                }
+
+                if (rules != null) {
+                    cache[domain] = rules
+                }
+
                 rules
             } catch (e: Exception) {
                 null

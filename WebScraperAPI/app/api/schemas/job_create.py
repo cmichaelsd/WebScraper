@@ -19,18 +19,13 @@ class JobCreate(BaseModel):
     @classmethod
     def validate_seed_urls(cls, urls):
         normalized = set()
-        for url in urls:
-            parsed = urlparse(str(url))
 
-            if parsed.hostname in ("localhost", "127.0.0.1"):
+        for url in urls:
+            if url.host in ("localhost", "127.0.0.1"):
                 raise ValueError("Localhost URLs are not allowed")
 
-            # normalize: lowercase host, strip fragment
-            clean = parsed._replace(
-                hostname=parsed.hostname.lower() if parsed.hostname else None,
-                fragment=""
-            ).geturl()
-
+            # Pydantic HttpUrl is already normalized
+            clean = str(url).split("#")[0]
             normalized.add(clean)
 
         if not normalized:

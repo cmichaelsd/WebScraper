@@ -1,0 +1,12 @@
+services:
+  worker:
+    build: .
+    env_file:
+      - .env
+    networks:
+      - scraper_net
+
+networks:
+  scraper_net:
+    external: true
+    name: webscraperapi_default

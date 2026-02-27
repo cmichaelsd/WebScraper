@@ -8,15 +8,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.example.db.JobRepository
 import org.example.db.PageRepository
+import org.example.di.appModule
+import org.koin.core.context.startKoin
 
 @Volatile
 var shuttingDown = false
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 fun main(): Unit = runBlocking {
-    val client = HttpClient(CIO) {
-        followRedirects = true
-        expectSuccess = false
+    startKoin {
+        modules(appModule)
     }
 
     val workerId = System.getenv("WORKER_ID") ?: "worker-local"
@@ -27,12 +28,12 @@ fun main(): Unit = runBlocking {
     })
 
     launch { maintenance() }
-    launch { worker(workerId, client) }
+    launch { worker(workerId) }
 
     awaitCancellation()
 }
 
-private suspend fun worker(workerId: String, client: HttpClient) {
+private suspend fun worker(workerId: String) {
     while (!shuttingDown) {
         try {
             val job = JobRepository.claimJob(workerId)
@@ -43,7 +44,7 @@ private suspend fun worker(workerId: String, client: HttpClient) {
             }
 
             println("Claimed job ${job.id}")
-            JobRepository.processJob(job, workerId, client)
+            JobRepository.processJob(job, workerId)
         } catch (e: Exception) {
             println("Worker error: ${e.message}")
             delay(3_000)

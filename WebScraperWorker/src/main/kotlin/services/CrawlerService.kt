@@ -9,10 +9,14 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.example.util.DomainThrottle
+import org.example.util.KtorRobotsFetcher
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
-class CrawlerService(private val client: HttpClient) {
+class CrawlerService(
+    private val robotsService: RobotsService,
+    private val client: HttpClient
+) {
     companion object {
         private const val DOMAIN_DELAY_MS = 2000L
         private const val MAX_RETRIES = 5
@@ -20,7 +24,6 @@ class CrawlerService(private val client: HttpClient) {
         private const val MAX_BACKOFF_MS = 60_000L
     }
 
-    private val robotsService = RobotsService(client)
     private val globalLimiter = Semaphore(5)
     private val domainLimiters = ConcurrentHashMap<String, DomainThrottle>()
 
