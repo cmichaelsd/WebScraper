@@ -1,12 +1,11 @@
 package org.example.db
 
-import io.ktor.client.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import org.example.models.Job
 import org.example.services.CrawlerService
 import org.koin.java.KoinJavaComponent.getKoin
-import java.util.UUID
+import java.util.*
 
 object JobRepository {
     fun claimJob(workerId: String): Job? {
@@ -15,14 +14,14 @@ object JobRepository {
 
             val sql = """
                 UPDATE jobs
-                SET status = 'RUNNING',
+                SET status = '${Status.RUNNING.name}',
                     claimed_by = ?,
                     claimed_at = NOW(),
                     heartbeat_at = NOW(),
                     updated_at = NOW()
                 WHERE id = (
                     SELECT id FROM jobs
-                    WHERE status = 'PENDING'
+                    WHERE status = '${Status.PENDING.name}'
                     ORDER BY created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -100,7 +99,7 @@ object JobRepository {
         Database.dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
-                SET status = 'COMPLETED',
+                SET status = '${Status.COMPLETED.name}',
                     updated_at = NOW(),
                     completed_at = NOW()
                 WHERE id = ? AND claimed_by = ?
@@ -122,8 +121,8 @@ object JobRepository {
             val sql = """
                 UPDATE jobs
                 SET status = CASE
-                        WHEN attempt_count >= 3 THEN 'FAILED'
-                        ELSE 'PENDING'
+                        WHEN attempt_count >= 3 THEN '${Status.FAILED.name}'
+                        ELSE '${Status.PENDING.name}'
                     END,
                     attempt_count = attempt_count + 1,
                     last_error = ?,
@@ -144,12 +143,12 @@ object JobRepository {
         Database.dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
-                SET status = 'PENDING',
+                SET status = '${Status.PENDING.name}',
                     claimed_by = NULL,
                     claimed_at = NULL,
                     heartbeat_at = NULL,
                     updated_at = NOW()
-                WHERE status = 'RUNNING'
+                WHERE status = '${Status.RUNNING.name}'
                     AND heartbeat_at < NOW() - INTERVAL '30 seconds'
                     AND attempt_count < 3
             """.trimIndent()

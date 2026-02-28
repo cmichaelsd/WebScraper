@@ -1,5 +1,4 @@
 from typing import List
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, HttpUrl, Field, field_validator
 
