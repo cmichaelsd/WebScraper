@@ -20,6 +20,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${coroutinesVersion}")
     testImplementation("io.mockk:mockk:1.13.10")
     testImplementation("io.insert-koin:koin-test:${koinVersion}")
+    testImplementation("io.ktor:ktor-client-mock:${ktorVersion}")
 
     // DI
     implementation("io.insert-koin:koin-core:${koinVersion}")

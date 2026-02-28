@@ -1,13 +1,14 @@
 package org.example.services
 
+import io.ktor.client.*
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.example.util.RobotsRules
-import org.example.util.interfaces.RobotsFetcher
 import java.net.URI
-import java.util.concurrent.ConcurrentHashMap
 
-class RobotsService(private val fetcher: RobotsFetcher) {
+class RobotsService(private val client: HttpClient) {
     private val cache = mutableMapOf<String, RobotsRules>()
     private val mutex = Mutex()
     private val userAgent = "WebScraperBot"
@@ -38,14 +39,10 @@ class RobotsService(private val fetcher: RobotsFetcher) {
             cache[domain]?.let { return it }
 
             return try {
-                val rules = fetcher.fetchRobots(domain)?.let {
+                val rules = client.get("${domain}/robots.txt").bodyAsText().let {
                     parseRobots(it)
                 }
-
-                if (rules != null) {
-                    cache[domain] = rules
-                }
-
+                cache[domain] = rules
                 rules
             } catch (e: Exception) {
                 null

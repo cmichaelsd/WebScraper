@@ -9,13 +9,14 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.example.util.DomainThrottle
-import org.example.util.KtorRobotsFetcher
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Clock
 
 class CrawlerService(
     private val robotsService: RobotsService,
-    private val client: HttpClient
+    private val client: HttpClient,
+    private val clock: () -> Long = { System.currentTimeMillis() }
 ) {
     companion object {
         private const val DOMAIN_DELAY_MS = 2000L
@@ -25,7 +26,7 @@ class CrawlerService(
     }
 
     private val globalLimiter = Semaphore(5)
-    private val domainLimiters = ConcurrentHashMap<String, DomainThrottle>()
+    private val domainLimiters = mutableMapOf<String, DomainThrottle>()
 
 //    suspend fun crawl(seedUrls: List<String>, maxDepth: Int) {
 //        for (url in seedUrls) {
@@ -81,11 +82,7 @@ class CrawlerService(
     }
 
     private suspend fun throttleDomain(url: String) {
-        val domain = try {
-            URI(url).host ?: return
-        } catch (e: Exception) {
-            return
-        }
+        val domain = URI(url).host ?: return
 
         val limiter = domainLimiters.computeIfAbsent(domain) {
             DomainThrottle()
@@ -95,14 +92,14 @@ class CrawlerService(
             val crawlDelaySeconds = robotsService.getCrawlDelay(url)
             val effectiveDelay = (crawlDelaySeconds?.times(1000)) ?: DOMAIN_DELAY_MS
 
-            val now = System.currentTimeMillis()
+            val now = clock()
             val elapsed = now - limiter.lastRequestTime
 
             if (elapsed < effectiveDelay) {
-                delay(DOMAIN_DELAY_MS - elapsed)
+                delay(effectiveDelay - elapsed)
             }
 
-            limiter.lastRequestTime = System.currentTimeMillis()
+            limiter.lastRequestTime = clock()
         }
     }
 
