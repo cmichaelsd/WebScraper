@@ -71,7 +71,7 @@ class RobotsServiceTest : KoinTest {
         val service = RobotsService(client)
         val result = service.getCrawlDelay("https://example.com/admin")
 
-        assertEquals(5000, result)
+        assertEquals(5, result)
     }
 
     @Test

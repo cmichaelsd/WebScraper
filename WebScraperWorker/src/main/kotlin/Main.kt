@@ -6,15 +6,17 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.example.db.Database
 import org.example.db.JobRepository
 import org.example.db.PageRepository
 import org.example.di.appModule
 import org.koin.core.context.startKoin
+import org.koin.java.KoinJavaComponent.getKoin
 
 @Volatile
 var shuttingDown = false
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
+
+
 fun main(): Unit = runBlocking {
     startKoin {
         modules(appModule)
@@ -27,16 +29,18 @@ fun main(): Unit = runBlocking {
         shuttingDown = true
     })
 
-    launch { maintenance() }
-    launch { worker(workerId) }
+    val jobRepository: JobRepository = getKoin().get()
+
+    launch { maintenance(jobRepository) }
+    launch { worker(workerId, jobRepository) }
 
     awaitCancellation()
 }
 
-private suspend fun worker(workerId: String) {
+private suspend fun worker(workerId: String, jobRepository: JobRepository) {
     while (!shuttingDown) {
         try {
-            val job = JobRepository.claimJob(workerId)
+            val job = jobRepository.claimJob(workerId)
 
             if (job == null) {
                 delay(2_000)
@@ -44,7 +48,7 @@ private suspend fun worker(workerId: String) {
             }
 
             println("Claimed job ${job.id}")
-            JobRepository.processJob(job, workerId)
+            jobRepository.processJob(job, workerId)
         } catch (e: Exception) {
             println("Worker error: ${e.message}")
             delay(3_000)
@@ -52,10 +56,10 @@ private suspend fun worker(workerId: String) {
     }
 }
 
-private suspend fun maintenance() {
+private suspend fun maintenance(jobRepository: JobRepository) {
     while (!shuttingDown) {
         try {
-            JobRepository.reclaimStaleJobs()
+            jobRepository.reclaimStaleJobs()
             PageRepository.reclaimStalePages()
             delay(10_000)
         } catch (e: Exception) {

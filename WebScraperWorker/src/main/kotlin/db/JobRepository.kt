@@ -6,10 +6,11 @@ import org.example.models.Job
 import org.example.services.CrawlerService
 import org.koin.java.KoinJavaComponent.getKoin
 import java.util.*
+import javax.sql.DataSource
 
-object JobRepository {
+class JobRepository(private val dataSource: DataSource) {
     fun claimJob(workerId: String): Job? {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             conn.autoCommit = false
 
             val sql = """
@@ -96,7 +97,7 @@ object JobRepository {
     }
 
     fun completeJob(jobId: UUID, workerId: String) {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
                 SET status = '${Status.COMPLETED.name}',
@@ -117,7 +118,7 @@ object JobRepository {
     }
 
     fun markFailed(jobId: UUID, workerId: String, error: String?) {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
                 SET status = CASE
@@ -140,7 +141,7 @@ object JobRepository {
     }
 
     fun reclaimStaleJobs() {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
                 SET status = '${Status.PENDING.name}',
@@ -163,7 +164,7 @@ object JobRepository {
     }
 
     fun updateHeartbeat(jobId: UUID, workerId: String) {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
                 SET heartbeat_at = NOW(),

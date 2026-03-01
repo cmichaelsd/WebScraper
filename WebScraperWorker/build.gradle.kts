@@ -15,12 +15,16 @@ dependencies {
     val ktorVersion = "2.3.8"
     val coroutinesVersion = "1.8.1"
     val koinVersion = "3.5.6"
+    val testContainers = "1.21.4"
 
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${coroutinesVersion}")
     testImplementation("io.mockk:mockk:1.13.10")
     testImplementation("io.insert-koin:koin-test:${koinVersion}")
     testImplementation("io.ktor:ktor-client-mock:${ktorVersion}")
+    testImplementation("org.testcontainers:testcontainers:${testContainers}")
+    testImplementation("org.testcontainers:postgresql:${testContainers}")
+    testImplementation("org.testcontainers:junit-jupiter:${testContainers}")
 
     // DI
     implementation("io.insert-koin:koin-core:${koinVersion}")
