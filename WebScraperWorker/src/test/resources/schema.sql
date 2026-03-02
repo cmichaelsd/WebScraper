@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict FJY9IjCOCbLSnHFap92OF7egS3lPSEKnf5DuexYkpBeKbGGmFngGSHs6cj5VeOV
+\restrict ffhU8xY2irxf5duiKv5sIA4BWamlbxX74cUB8TXWdbHNX1mV9lEYSNn9pD8po3m
 
 -- Dumped from database version 16.11 (Debian 16.11-1.pgdg13+1)
 -- Dumped by pg_dump version 16.11 (Debian 16.11-1.pgdg13+1)
@@ -23,6 +23,15 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: alembic_version; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alembic_version (
+    version_num character varying(32) NOT NULL
+);
+
+
+--
 -- Name: jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -39,7 +48,7 @@ CREATE TABLE public.jobs (
     max_depth integer NOT NULL,
     pages_fetched integer,
     pages_queued integer,
-    attempt_count integer,
+    attempt_count integer DEFAULT 0 NOT NULL,
     last_error text
 );
 
@@ -58,6 +67,14 @@ CREATE TABLE public.pages (
     created_at timestamp with time zone DEFAULT now(),
     error text
 );
+
+
+--
+-- Name: alembic_version alembic_version_pkc; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alembic_version
+    ADD CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num);
 
 
 --
@@ -103,5 +120,5 @@ ALTER TABLE ONLY public.pages
 -- PostgreSQL database dump complete
 --
 
-\unrestrict FJY9IjCOCbLSnHFap92OF7egS3lPSEKnf5DuexYkpBeKbGGmFngGSHs6cj5VeOV
+\unrestrict ffhU8xY2irxf5duiKv5sIA4BWamlbxX74cUB8TXWdbHNX1mV9lEYSNn9pD8po3m
 

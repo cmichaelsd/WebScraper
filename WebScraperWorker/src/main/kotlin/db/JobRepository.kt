@@ -122,7 +122,7 @@ class JobRepository(private val dataSource: DataSource) {
             val sql = """
                 UPDATE jobs
                 SET status = CASE
-                        WHEN attempt_count >= 3 THEN '${Status.FAILED.name}'
+                        WHEN attempt_count + 1 >= 3 THEN '${Status.FAILED.name}'
                         ELSE '${Status.PENDING.name}'
                     END,
                     attempt_count = attempt_count + 1,
@@ -163,7 +163,7 @@ class JobRepository(private val dataSource: DataSource) {
         }
     }
 
-    fun updateHeartbeat(jobId: UUID, workerId: String) {
+    fun updateHeartbeat(jobId: UUID, workerId: String): Boolean {
         dataSource.connection.use { conn ->
             val sql = """
                 UPDATE jobs
@@ -175,7 +175,7 @@ class JobRepository(private val dataSource: DataSource) {
             conn.prepareStatement(sql).use {
                 it.setObject(1, jobId)
                 it.setString(2, workerId)
-                it.executeUpdate()
+                return it.executeUpdate() == 1
             }
         }
     }
