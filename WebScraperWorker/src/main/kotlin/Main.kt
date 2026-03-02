@@ -6,10 +6,10 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import org.example.db.Database
 import org.example.db.JobRepository
 import org.example.db.PageRepository
 import org.example.di.appModule
+import org.example.services.JobService
 import org.koin.core.context.startKoin
 import org.koin.java.KoinJavaComponent.getKoin
 
@@ -29,41 +29,10 @@ fun main(): Unit = runBlocking {
         shuttingDown = true
     })
 
-    val jobRepository: JobRepository = getKoin().get()
+    val jobService: JobService = getKoin().get()
 
-    launch { maintenance(jobRepository) }
-    launch { worker(workerId, jobRepository) }
+    launch { jobService.maintenance() }
+    launch { jobService.worker(workerId) }
 
     awaitCancellation()
-}
-
-private suspend fun worker(workerId: String, jobRepository: JobRepository) {
-    while (!shuttingDown) {
-        try {
-            val job = jobRepository.claimJob(workerId)
-
-            if (job == null) {
-                delay(2_000)
-                continue
-            }
-
-            println("Claimed job ${job.id}")
-            jobRepository.processJob(job, workerId)
-        } catch (e: Exception) {
-            println("Worker error: ${e.message}")
-            delay(3_000)
-        }
-    }
-}
-
-private suspend fun maintenance(jobRepository: JobRepository) {
-    while (!shuttingDown) {
-        try {
-            jobRepository.reclaimStaleJobs()
-            PageRepository.reclaimStalePages()
-            delay(10_000)
-        } catch (e: Exception) {
-            println("Maintenance error: ${e.message}")
-        }
-    }
 }

@@ -2,10 +2,11 @@ package org.example.db
 
 import org.example.models.Page
 import java.util.*
+import javax.sql.DataSource
 
-object PageRepository {
+class PageRepository(private val dataSource: DataSource) {
     fun seedPages(jobId: UUID, seedUrls: List<String>) {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 INSERT INTO pages (id, job_id, url, depth, status)
                 VALUES (?, ?, ?, 0, 'PENDING')
@@ -25,7 +26,7 @@ object PageRepository {
     }
 
     fun claimNextPage(jobId: UUID): Page? {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             conn.autoCommit = false
 
             val sql = """
@@ -66,8 +67,7 @@ object PageRepository {
         urls: List<String>,
         depth: Int
     ) {
-        Database.dataSource.connection.use { conn ->
-
+        dataSource.connection.use { conn ->
             val sql = """
                 INSERT INTO pages (id, job_id, url, depth, status)
                 VALUES (?, ?, ?, ?, 'PENDING')
@@ -88,7 +88,7 @@ object PageRepository {
     }
 
     fun markCompleted(pageId: UUID) {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE pages
                 SET status = 'COMPLETED'
@@ -103,7 +103,7 @@ object PageRepository {
     }
 
     fun markFailed(pageId: UUID, error: String?) {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE pages
                 SET status = 'FAILED',
@@ -120,7 +120,7 @@ object PageRepository {
     }
 
     fun hasUnfinishedPages(jobId: UUID): Boolean {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 SELECT 1 FROM pages
                 WHERE job_id = ?
@@ -137,7 +137,7 @@ object PageRepository {
     }
 
     fun hasFailedPages(jobId: UUID): Boolean {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 SELECT 1 FROM pages
                 WHERE job_id = ?
@@ -154,7 +154,7 @@ object PageRepository {
     }
 
     fun reclaimStalePages() {
-        Database.dataSource.connection.use { conn ->
+        dataSource.connection.use { conn ->
             val sql = """
                 UPDATE pages
                 SET status = 'PENDING'

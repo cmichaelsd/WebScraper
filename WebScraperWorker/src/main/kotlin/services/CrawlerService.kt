@@ -1,17 +1,14 @@
 package org.example.services
 
-import io.ktor.client.request.get
-import io.ktor.client.HttpClient
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
+import io.ktor.client.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.example.util.DomainThrottle
 import java.net.URI
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.time.Clock
 
 class CrawlerService(
     private val robotsService: RobotsService,
@@ -27,12 +24,6 @@ class CrawlerService(
 
     private val globalLimiter = Semaphore(5)
     private val domainLimiters = mutableMapOf<String, DomainThrottle>()
-
-//    suspend fun crawl(seedUrls: List<String>, maxDepth: Int) {
-//        for (url in seedUrls) {
-//            crawlSingle(url, 0 , maxDepth)
-//        }
-//    }
 
     suspend fun crawlSingle(
         url: String,

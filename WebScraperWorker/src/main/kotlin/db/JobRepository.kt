@@ -1,10 +1,7 @@
 package org.example.db
 
-import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import org.example.models.Job
-import org.example.services.CrawlerService
-import org.koin.java.KoinJavaComponent.getKoin
 import java.util.*
 import javax.sql.DataSource
 
@@ -49,49 +46,6 @@ class JobRepository(private val dataSource: DataSource) {
                     conn.rollback()
                     null
                 }
-            }
-        }
-    }
-
-    suspend fun processJob(
-        job: Job,
-        workerId: String
-    ) {
-        coroutineScope {
-            val crawler: CrawlerService = getKoin().get()
-
-            PageRepository.seedPages(job.id, job.seedUrls)
-
-            val heartbeatJob = launch {
-                while (isActive) {
-                    updateHeartbeat(job.id, workerId)
-                    delay(5_000)
-                }
-            }
-
-            try {
-                while (true) {
-                    val page = PageRepository.claimNextPage(job.id) ?: break
-                    try {
-                        val discoveredUrls = crawler.crawlSingle(page.url, page.depth, job.maxDepth)
-                        PageRepository.insertDiscovered(job.id, discoveredUrls, page.depth + 1)
-                        PageRepository.markCompleted(page.id)
-                    } catch (e: Exception) {
-                        PageRepository.markFailed(page.id, e.stackTraceToString())
-                    }
-                }
-
-                if (!PageRepository.hasUnfinishedPages(job.id)) {
-                    if (PageRepository.hasFailedPages(job.id)) {
-                        markFailed(job.id, workerId, "One or more pages failed")
-                    } else {
-                        completeJob(job.id, workerId)
-                    }
-                }
-            } catch (e: Exception) {
-                markFailed(job.id, workerId, e.message)
-            } finally {
-                heartbeatJob.cancelAndJoin()
             }
         }
     }
