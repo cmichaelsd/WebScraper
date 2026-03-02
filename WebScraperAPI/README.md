@@ -19,6 +19,8 @@ When a client creates a job, a job id is returned, with this job id a client can
 `docker exec -it job-db -U jobs -d jobs`
 
 ## How to manage DB schema
+Upon first setup ensure api is running locally then run `alembic upgrade head`
+
 If the schema for the DB is changed ensure that the following commands are ran:
 - `alembic revision --autogenerate -m "<what changed>"`
 - `alembic upgrade head`

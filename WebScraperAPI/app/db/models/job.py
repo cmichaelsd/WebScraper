@@ -7,7 +7,7 @@ from sqlalchemy import (
     DateTime,
     Text,
     Enum,
-    func
+    func, text
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -36,7 +36,7 @@ class Job(Base):
     pages_fetched = Column(Integer, default=0)
     pages_queued = Column(Integer, default=0)
 
-    attempt_count = Column(Integer, default=0)
+    attempt_count = Column(Integer, nullable=False, server_default=text("0"))
     last_error = Column(Text, nullable=True)
 
     pages = relationship("Page", back_populates="job", cascade="all, delete-orphan")
