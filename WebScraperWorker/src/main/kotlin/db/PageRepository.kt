@@ -5,11 +5,12 @@ import java.util.*
 import javax.sql.DataSource
 
 class PageRepository(private val dataSource: DataSource) {
+
     fun seedPages(jobId: UUID, seedUrls: List<String>) {
         dataSource.connection.use { conn ->
             val sql = """
                 INSERT INTO pages (id, job_id, url, depth, status)
-                VALUES (?, ?, ?, 0, 'PENDING')
+                VALUES (?, ?, ?, 0, '${Status.PENDING.name}')
                 ON CONFLICT (job_id, url) DO NOTHING
             """.trimIndent()
 
@@ -31,11 +32,11 @@ class PageRepository(private val dataSource: DataSource) {
 
             val sql = """
                 UPDATE pages
-                SET status = 'RUNNING'
+                SET status = '${Status.RUNNING.name}'
                 WHERE id = (
                     SELECT id FROM pages
                     WHERE job_id = ?
-                        AND status = 'PENDING'
+                        AND status = '${Status.PENDING.name}'
                     ORDER BY depth
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -70,7 +71,7 @@ class PageRepository(private val dataSource: DataSource) {
         dataSource.connection.use { conn ->
             val sql = """
                 INSERT INTO pages (id, job_id, url, depth, status)
-                VALUES (?, ?, ?, ?, 'PENDING')
+                VALUES (?, ?, ?, ?, '${Status.PENDING.name}')
                 ON CONFLICT (job_id, url) DO NOTHING
             """.trimIndent()
 
@@ -87,26 +88,26 @@ class PageRepository(private val dataSource: DataSource) {
         }
     }
 
-    fun markCompleted(pageId: UUID) {
+    fun markCompleted(pageId: UUID): Boolean {
         dataSource.connection.use { conn ->
             val sql = """
                 UPDATE pages
-                SET status = 'COMPLETED'
+                SET status = '${Status.COMPLETED.name}'
                 WHERE id = ?
             """.trimIndent()
 
             conn.prepareStatement(sql).use {
                 it.setObject(1, pageId)
-                it.executeUpdate()
+                return it.executeUpdate() == 1
             }
         }
     }
 
-    fun markFailed(pageId: UUID, error: String?) {
+    fun markFailed(pageId: UUID, error: String?): Boolean {
         dataSource.connection.use { conn ->
             val sql = """
                 UPDATE pages
-                SET status = 'FAILED',
+            SET status = '${Status.FAILED.name}',
                     error = ?
                 WHERE id = ?
             """.trimIndent()
@@ -114,7 +115,7 @@ class PageRepository(private val dataSource: DataSource) {
             conn.prepareStatement(sql).use {
                 it.setString(1, error)
                 it.setObject(2, pageId)
-                it.executeUpdate()
+                return it.executeUpdate() == 1
             }
         }
     }
@@ -124,7 +125,7 @@ class PageRepository(private val dataSource: DataSource) {
             val sql = """
                 SELECT 1 FROM pages
                 WHERE job_id = ?
-                  AND status IN ('PENDING', 'RUNNING')
+                  AND status IN ('${Status.PENDING.name}', '${Status.RUNNING.name}')
                 LIMIT 1
             """.trimIndent()
 
@@ -141,7 +142,7 @@ class PageRepository(private val dataSource: DataSource) {
             val sql = """
                 SELECT 1 FROM pages
                 WHERE job_id = ?
-                    AND status = 'FAILED'
+                    AND status = '${Status.FAILED.name}'
                 LIMIT 1
             """.trimIndent()
 
@@ -157,8 +158,8 @@ class PageRepository(private val dataSource: DataSource) {
         dataSource.connection.use { conn ->
             val sql = """
                 UPDATE pages
-                SET status = 'PENDING'
-                WHERE status = 'RUNNING'
+                SET status = '${Status.PENDING.name}'
+                WHERE status = '${Status.RUNNING.name}'
                   AND created_at < NOW() - INTERVAL '30 seconds'
             """.trimIndent()
 
