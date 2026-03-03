@@ -2,17 +2,18 @@ package db
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.test.runTest
-import org.example.db.JobRepository
-import org.example.db.Status
+import org.webscraper.db.JobRepository
+import org.webscraper.db.Status
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInstance
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.io.File
+import java.sql.Connection
+import java.sql.ResultSet
 import javax.sql.DataSource
 import kotlin.test.Test
 
@@ -20,26 +21,29 @@ import kotlin.test.Test
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class JobRepositoryTest {
     companion object {
+        private const val DB_SCHEMA_PATH = "src/test/resources/schema.sql"
         private const val WORKER_ID = "worker-1"
+        private const val OTHER_WORKER_ID = "worker-2"
         private const val RESULT_SET_STATUS_KEY = "status"
         private const val RESULT_SET_ATTEMPT_COUNT_KEY = "attempt_count"
+        private const val SELECT_STATUS_FROM_JOBS = "SELECT status FROM jobs"
+        private const val SELECT_STATUS_AND_ATTEMPT_COUNT_FROM_JOBS = "SELECT attempt_count, status FROM jobs"
+
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16").apply {
+            withDatabaseName("jobs")
+            withUsername("jobs")
+            withPassword("jobs")
+        }
     }
 
     private lateinit var dataSource: DataSource
     private lateinit var jobRepository: JobRepository
 
-    @Container
-    val postgres = PostgreSQLContainer("postgres:16").apply {
-        withDatabaseName("jobs")
-        withUsername("jobs")
-        withPassword("jobs")
-    }
-
     @BeforeAll
     fun setup() {
-        postgres.start()
-
-        val rawSchema = File("src/test/resources/schema.sql").readText()
+        val rawSchema = File(DB_SCHEMA_PATH).readText()
         val cleanedSchema = rawSchema.lines()
             .filterNot { it.startsWith("\\") }
             .joinToString("\n")
@@ -60,6 +64,13 @@ class JobRepositoryTest {
         jobRepository = JobRepository(dataSource)
     }
 
+    @BeforeEach
+    fun clean() {
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute("TRUNCATE jobs CASCADE")
+        }
+    }
+
     @Test
     fun `claimJob transitions PENDING to RUNNING`() {
         seedJobRequest()
@@ -68,25 +79,36 @@ class JobRepositoryTest {
         assertNotNull(job)
 
         dataSource.connection.use { conn ->
-            val resultSet = conn.createStatement().executeQuery("SELECT status FROM jobs")
-            resultSet.next()
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
             assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
         }
     }
 
     @Test
-    fun `completeJob transitions RUNNING to COMPLETE`() {
+    fun `completeJob transitions RUNNING to COMPLETE when job is owned by worker`() {
         seedJobRequest()
 
-        val job = jobRepository.claimJob(WORKER_ID)
-        assertNotNull(job)
+        val job = jobRepository.claimJob(WORKER_ID)!!
 
-        jobRepository.completeJob(job!!.id, WORKER_ID)
+        jobRepository.completeJob(job.id, WORKER_ID)
 
         dataSource.connection.use { conn ->
-            val resultSet = conn.createStatement().executeQuery("SELECT status FROM jobs")
-            resultSet.next()
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
             assertEquals(Status.COMPLETED.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `completeJob does nothing when job is not owned by worker`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+
+        jobRepository.completeJob(job.id, OTHER_WORKER_ID)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
         }
     }
 
@@ -95,14 +117,26 @@ class JobRepositoryTest {
         seedJobRequest()
 
         val job = jobRepository.claimJob(WORKER_ID)
-        assertNotNull(job)
 
         jobRepository.markFailed(job!!.id, WORKER_ID, null)
 
         dataSource.connection.use { conn ->
-            val resultSet = conn.createStatement().executeQuery("SELECT status FROM jobs")
-            resultSet.next()
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
             assertEquals(Status.PENDING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `markFailed does nothing when job is not currently claimed by a different worker`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        jobRepository.markFailed(job.id, OTHER_WORKER_ID, null)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_AND_ATTEMPT_COUNT_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+            assertEquals(0, resultSet.getInt(RESULT_SET_ATTEMPT_COUNT_KEY))
         }
     }
 
@@ -116,8 +150,7 @@ class JobRepositoryTest {
         }
 
         dataSource.connection.use { conn ->
-            val resultSet = conn.createStatement().executeQuery("SELECT attempt_count, status FROM jobs")
-            resultSet.next()
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_AND_ATTEMPT_COUNT_FROM_JOBS)
             assertEquals(Status.FAILED.name, resultSet.getString(RESULT_SET_STATUS_KEY))
             assertEquals(3, resultSet.getInt(RESULT_SET_ATTEMPT_COUNT_KEY))
         }
@@ -137,8 +170,7 @@ class JobRepositoryTest {
 
         jobRepository.reclaimStaleJobs()
         dataSource.connection.use { conn ->
-            val resultSet = conn.createStatement().executeQuery("SELECT status FROM jobs")
-            resultSet.next()
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
             assertEquals(Status.PENDING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
         }
     }
@@ -155,7 +187,7 @@ class JobRepositoryTest {
     fun `updateHeartbeat does not update heartbeat_at when worker does not own job`() {
         seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
-        val wasUpdated = jobRepository.updateHeartbeat(job.id, "OTHER_WORKER_ID")
+        val wasUpdated = jobRepository.updateHeartbeat(job.id, OTHER_WORKER_ID)
         assertFalse(wasUpdated)
     }
 
@@ -171,5 +203,11 @@ class JobRepositoryTest {
                 )
             """.trimIndent())
         }
+    }
+
+    private fun getItemFromDB(conn: Connection,query: String): ResultSet {
+        val resultSet = conn.createStatement().executeQuery(query)
+        resultSet.next()
+        return resultSet
     }
 }

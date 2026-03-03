@@ -1,4 +1,4 @@
-package org.example.db
+package org.webscraper.db
 
 enum class Status {
     PENDING,

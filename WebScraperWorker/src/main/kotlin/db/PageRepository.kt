@@ -1,6 +1,6 @@
-package org.example.db
+package org.webscraper.db
 
-import org.example.models.Page
+import org.webscraper.models.Page
 import java.util.*
 import javax.sql.DataSource
 

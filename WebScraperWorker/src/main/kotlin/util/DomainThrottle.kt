@@ -1,4 +1,4 @@
-package org.example.util
+package org.webscraper.util
 
 import kotlinx.coroutines.sync.Mutex
 

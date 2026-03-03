@@ -8,8 +8,8 @@ import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
-import org.example.services.CrawlerService
-import org.example.services.RobotsService
+import org.webscraper.services.CrawlerService
+import org.webscraper.services.RobotsService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import kotlin.test.Test

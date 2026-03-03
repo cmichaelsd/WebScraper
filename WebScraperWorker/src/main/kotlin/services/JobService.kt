@@ -1,10 +1,10 @@
-package org.example.services
+package org.webscraper.services
 
 import kotlinx.coroutines.*
-import org.example.db.JobRepository
-import org.example.db.PageRepository
-import org.example.models.Job
-import org.example.shuttingDown
+import org.webscraper.db.JobRepository
+import org.webscraper.db.PageRepository
+import org.webscraper.models.Job
+import org.webscraper.shuttingDown
 
 class JobService(
     private val jobRepository: JobRepository,

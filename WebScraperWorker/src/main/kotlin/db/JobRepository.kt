@@ -1,7 +1,7 @@
-package org.example.db
+package org.webscraper.db
 
 import kotlinx.serialization.json.Json
-import org.example.models.Job
+import org.webscraper.models.Job
 import java.util.*
 import javax.sql.DataSource
 

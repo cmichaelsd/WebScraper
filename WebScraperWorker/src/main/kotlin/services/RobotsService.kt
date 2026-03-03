@@ -1,11 +1,11 @@
-package org.example.services
+package org.webscraper.services
 
 import io.ktor.client.*
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.example.util.RobotsRules
+import org.webscraper.util.RobotsRules
 import java.net.URI
 
 class RobotsService(private val client: HttpClient) {

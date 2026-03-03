@@ -2,12 +2,12 @@ package org.example.di
 
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
-import org.example.db.Database
-import org.example.db.JobRepository
-import org.example.db.PageRepository
-import org.example.services.CrawlerService
-import org.example.services.JobService
-import org.example.services.RobotsService
+import org.webscraper.db.Database
+import org.webscraper.db.JobRepository
+import org.webscraper.db.PageRepository
+import org.webscraper.services.CrawlerService
+import org.webscraper.services.JobService
+import org.webscraper.services.RobotsService
 import org.koin.dsl.module
 import javax.sql.DataSource
 

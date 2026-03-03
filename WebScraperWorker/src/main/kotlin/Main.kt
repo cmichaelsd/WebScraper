@@ -1,15 +1,10 @@
-package org.example
+package org.webscraper
 
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import org.example.db.JobRepository
-import org.example.db.PageRepository
 import org.example.di.appModule
-import org.example.services.JobService
+import org.webscraper.services.JobService
 import org.koin.core.context.startKoin
 import org.koin.java.KoinJavaComponent.getKoin
 

@@ -1,4 +1,4 @@
-package org.example.services
+package org.webscraper.services
 
 import io.ktor.client.*
 import io.ktor.client.request.*
@@ -7,7 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
-import org.example.util.DomainThrottle
+import org.webscraper.util.DomainThrottle
 import java.net.URI
 
 class CrawlerService(

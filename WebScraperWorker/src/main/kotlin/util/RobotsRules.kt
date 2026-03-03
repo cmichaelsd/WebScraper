@@ -1,4 +1,4 @@
-package org.example.util
+package org.webscraper.util
 
 data class RobotsRules(
     val disallowed: List<String>,
