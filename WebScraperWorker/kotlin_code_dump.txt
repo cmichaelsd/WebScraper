@@ -1,0 +1,1468 @@
+===== src/main/kotlin/Main.kt =====
+package org.webscraper
+
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.example.di.appModule
+import org.webscraper.services.JobService
+import org.koin.core.context.startKoin
+import org.koin.java.KoinJavaComponent.getKoin
+
+@Volatile
+var shuttingDown = false
+
+
+fun main(): Unit = runBlocking {
+    startKoin {
+        modules(appModule)
+    }
+
+    val workerId = System.getenv("WORKER_ID") ?: "worker-local"
+
+    Runtime.getRuntime().addShutdownHook(Thread {
+        println("Shutdown signal received")
+        shuttingDown = true
+    })
+
+    val jobService: JobService = getKoin().get()
+
+    launch { jobService.maintenance() }
+    launch { jobService.worker(workerId) }
+
+    awaitCancellation()
+}
+===== src/main/kotlin/db/Database.kt =====
+package org.webscraper.db
+
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
+
+object Database {
+    private val jdbcUrlValue = System.getenv("JDBC_URL") ?: error("JDBC_URL not set")
+    private val usernameValue = System.getenv("DB_USER") ?: error("DB_USER not set")
+    private val passwordValue = System.getenv("DB_PASSWORD") ?: error("DB_PASSWORD not set")
+    private val hikariConfig = HikariConfig().apply {
+        jdbcUrl = jdbcUrlValue
+        username = usernameValue
+        password = passwordValue
+        maximumPoolSize = 5
+    }
+
+    val dataSource = HikariDataSource(hikariConfig)
+}
+===== src/main/kotlin/db/JobRepository.kt =====
+package org.webscraper.db
+
+import kotlinx.serialization.json.Json
+import org.webscraper.models.Job
+import java.util.*
+import javax.sql.DataSource
+
+class JobRepository(private val dataSource: DataSource) {
+    fun claimJob(workerId: String): Job? {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+
+            val sql = """
+                UPDATE jobs
+                SET status = '${Status.RUNNING.name}',
+                    claimed_by = ?,
+                    claimed_at = NOW(),
+                    heartbeat_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = (
+                    SELECT id FROM jobs
+                    WHERE status = '${Status.PENDING.name}'
+                    ORDER BY created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING id, seed_urls, max_depth
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setString(1, workerId)
+
+                val resultSet = it.executeQuery()
+
+                return if (resultSet.next()) {
+                    conn.commit()
+
+                    val seedUrlsJson = resultSet.getString("seed_urls")
+
+                    Job(
+                        id = resultSet.getObject("id", UUID::class.java),
+                        seedUrls = Json.decodeFromString(seedUrlsJson),
+                        maxDepth = resultSet.getInt("max_depth")
+                    )
+                } else {
+                    conn.rollback()
+                    null
+                }
+            }
+        }
+    }
+
+    fun completeJob(jobId: UUID, workerId: String) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE jobs
+                SET status = '${Status.COMPLETED.name}',
+                    updated_at = NOW(),
+                    completed_at = NOW()
+                WHERE id = ? 
+                    AND claimed_by = ?
+                    AND status = '${Status.RUNNING.name}'
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setObject(1, jobId)
+                it.setString(2, workerId)
+                val updated = it.executeUpdate()
+                if (updated == 0) {
+                    println("Job no longer owned by this worker.")
+                }
+            }
+        }
+    }
+
+    fun markFailed(jobId: UUID, workerId: String, error: String?) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE jobs
+                SET status = CASE
+                        WHEN attempt_count + 1 >= 3 THEN '${Status.FAILED.name}'
+                        ELSE '${Status.PENDING.name}'
+                    END,
+                    attempt_count = attempt_count + 1,
+                    last_error = ?,
+                    updated_at = NOW()
+                WHERE id = ? AND claimed_by = ?
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setString(1, error)
+                it.setObject(2, jobId)
+                it.setString(3, workerId)
+                it.executeUpdate()
+            }
+        }
+    }
+
+    fun reclaimStaleJobs() {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE jobs
+                SET status = '${Status.PENDING.name}',
+                    claimed_by = NULL,
+                    claimed_at = NULL,
+                    heartbeat_at = NULL,
+                    updated_at = NOW()
+                WHERE status = '${Status.RUNNING.name}'
+                    AND heartbeat_at < NOW() - INTERVAL '30 seconds'
+                    AND attempt_count < 3
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                val updated = it.executeUpdate()
+                if (updated > 0) {
+                    println("Reclaimed $updated stale job(s)")
+                }
+            }
+        }
+    }
+
+    fun updateHeartbeat(jobId: UUID, workerId: String): Boolean {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE jobs
+                SET heartbeat_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = ? AND claimed_by = ?
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setObject(1, jobId)
+                it.setString(2, workerId)
+                return it.executeUpdate() == 1
+            }
+        }
+    }
+}
+===== src/main/kotlin/db/PageRepository.kt =====
+package org.webscraper.db
+
+import org.webscraper.models.Page
+import java.util.*
+import javax.sql.DataSource
+
+class PageRepository(private val dataSource: DataSource) {
+
+    fun seedPages(jobId: UUID, seedUrls: List<String>) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                INSERT INTO pages (id, job_id, url, depth, status)
+                VALUES (?, ?, ?, 0, '${Status.PENDING.name}')
+                ON CONFLICT (job_id, url) DO NOTHING
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                for (url in seedUrls) {
+                    it.setObject(1, UUID.randomUUID())
+                    it.setObject(2, jobId)
+                    it.setString(3, url)
+                    it.addBatch()
+                }
+                it.executeBatch()
+            }
+        }
+    }
+
+    fun claimNextPage(jobId: UUID): Page? {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+
+            val sql = """
+                UPDATE pages
+                SET status = '${Status.RUNNING.name}'
+                WHERE id = (
+                    SELECT id FROM pages
+                    WHERE job_id = ?
+                        AND status = '${Status.PENDING.name}'
+                    ORDER BY depth
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING id, url, depth
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setObject(1, jobId)
+                val resultSet = it.executeQuery()
+
+                return if (resultSet.next()) {
+                    conn.commit()
+                    Page(
+                        id = resultSet.getObject("id", UUID::class.java),
+                        url = resultSet.getString ("url"),
+                        depth = resultSet.getInt("depth")
+                    )
+                } else {
+                    conn.rollback()
+                    null
+                }
+            }
+        }
+    }
+
+    fun insertDiscovered(
+        jobId: UUID,
+        urls: List<String>,
+        depth: Int
+    ) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                INSERT INTO pages (id, job_id, url, depth, status)
+                VALUES (?, ?, ?, ?, '${Status.PENDING.name}')
+                ON CONFLICT (job_id, url) DO NOTHING
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                for (url in urls) {
+                    it.setObject(1, UUID.randomUUID())
+                    it.setObject(2, jobId)
+                    it.setString(3, url)
+                    it.setInt(4, depth)
+                    it.addBatch()
+                }
+                it.executeBatch()
+            }
+        }
+    }
+
+    fun markCompleted(pageId: UUID): Boolean {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE pages
+                SET status = '${Status.COMPLETED.name}'
+                WHERE id = ?
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setObject(1, pageId)
+                return it.executeUpdate() == 1
+            }
+        }
+    }
+
+    fun markFailed(pageId: UUID, error: String?): Boolean {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE pages
+            SET status = '${Status.FAILED.name}',
+                    error = ?
+                WHERE id = ?
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setString(1, error)
+                it.setObject(2, pageId)
+                return it.executeUpdate() == 1
+            }
+        }
+    }
+
+    fun hasUnfinishedPages(jobId: UUID): Boolean {
+        dataSource.connection.use { conn ->
+            val sql = """
+                SELECT 1 FROM pages
+                WHERE job_id = ?
+                  AND status IN ('${Status.PENDING.name}', '${Status.RUNNING.name}')
+                LIMIT 1
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setObject(1, jobId)
+                val resultSet = it.executeQuery()
+                return resultSet.next()
+            }
+        }
+    }
+
+    fun hasFailedPages(jobId: UUID): Boolean {
+        dataSource.connection.use { conn ->
+            val sql = """
+                SELECT 1 FROM pages
+                WHERE job_id = ?
+                    AND status = '${Status.FAILED.name}'
+                LIMIT 1
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                it.setObject(1, jobId)
+                val resultSet = it.executeQuery()
+                return resultSet.next()
+            }
+        }
+    }
+
+    fun reclaimStalePages() {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE pages
+                SET status = '${Status.PENDING.name}'
+                WHERE status = '${Status.RUNNING.name}'
+                  AND created_at < NOW() - INTERVAL '30 seconds'
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use {
+                val updated = it.executeUpdate()
+                if (updated > 0) {
+                    println("Reclaimed $updated stale page(s)")
+                }
+            }
+        }
+    }
+}
+===== src/main/kotlin/db/Status.kt =====
+package org.webscraper.db
+
+enum class Status {
+    PENDING,
+    RUNNING,
+    COMPLETED,
+    FAILED
+}
+===== src/main/kotlin/models/Job.kt =====
+package org.webscraper.models
+
+import java.util.UUID
+
+data class Job(
+    val id: UUID,
+    val seedUrls: List<String>,
+    val maxDepth: Int
+)
+
+===== src/main/kotlin/models/Page.kt =====
+package org.webscraper.models
+
+import java.util.UUID
+
+data class Page(
+    val id: UUID,
+    val url: String,
+    val depth: Int
+)
+
+===== src/main/kotlin/services/CrawlerService.kt =====
+package org.webscraper.services
+
+import io.ktor.client.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import org.webscraper.util.DomainThrottle
+import java.net.URI
+
+class CrawlerService(
+    private val robotsService: RobotsService,
+    private val client: HttpClient,
+    private val clock: () -> Long = { System.currentTimeMillis() }
+) {
+    companion object {
+        private const val DOMAIN_DELAY_MS = 2000L
+        private const val MAX_RETRIES = 5
+        private const val INITIAL_BACK_OFF_MS = 2000L
+        private const val MAX_BACKOFF_MS = 60_000L
+    }
+
+    private val globalLimiter = Semaphore(5)
+    private val domainLimiters = mutableMapOf<String, DomainThrottle>()
+
+    suspend fun crawlSingle(
+        url: String,
+        depth: Int,
+        maxDepth: Int
+    ): List<String> {
+        if (depth > maxDepth) return emptyList()
+
+        if (!robotsService.isAllowed(url)) return emptyList()
+
+        var attempt = 0
+        var backoff = INITIAL_BACK_OFF_MS
+
+        while (attempt < MAX_RETRIES) {
+            try {
+                throttleDomain(url)
+
+                val response: HttpResponse = globalLimiter.withPermit {
+                    client.get(url)
+                }
+
+                val status = response.status.value
+
+                if (status == 429 || status == 503) {
+                    val retryAfterHeader = response.headers["Retry-After"]
+                    val retryAfterSeconds = retryAfterHeader?.toLongOrNull()
+                    val waitTime = retryAfterSeconds?.times(1000) ?: backoff.coerceAtMost(MAX_BACKOFF_MS)
+
+                    delay(waitTime)
+
+                    backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
+                    ++attempt
+                    continue
+                }
+
+                val html = response.bodyAsText()
+                return extractLinks(html)
+
+            } catch (e: Exception) {
+                delay(backoff.coerceAtMost(MAX_BACKOFF_MS))
+                backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
+                ++attempt
+            }
+        }
+
+        return emptyList()
+    }
+
+    private suspend fun throttleDomain(url: String) {
+        val domain = URI(url).host ?: return
+
+        val limiter = domainLimiters.computeIfAbsent(domain) {
+            DomainThrottle()
+        }
+
+        limiter.mutex.withLock {
+            val crawlDelaySeconds = robotsService.getCrawlDelay(url)
+            val effectiveDelay = (crawlDelaySeconds?.times(1000)) ?: DOMAIN_DELAY_MS
+
+            val now = clock()
+            val elapsed = now - limiter.lastRequestTime
+
+            if (elapsed < effectiveDelay) {
+                delay(effectiveDelay - elapsed)
+            }
+
+            limiter.lastRequestTime = clock()
+        }
+    }
+
+    private fun extractLinks(html: String): List<String> {
+        val regex = Regex("""href=["'](https?://[^"']+)["']""")
+        return regex.findAll(html)
+            .map { it.groupValues[1] }
+            .toList()
+    }
+}
+===== src/main/kotlin/services/RobotsService.kt =====
+package org.webscraper.services
+
+import io.ktor.client.*
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.webscraper.util.RobotsRules
+import java.net.URI
+
+class RobotsService(private val client: HttpClient) {
+    private val cache = mutableMapOf<String, RobotsRules>()
+    private val mutex = Mutex()
+    private val userAgent = "WebScraperBot"
+
+    suspend fun isAllowed(url: String): Boolean {
+        val uri = URI(url)
+        val domain = uri.host ?: return true
+        val path = uri.path ?: "/"
+
+        val rules = getRules(domain) ?: return true
+
+        return rules.disallowed.none {
+            path.startsWith(it)
+        }
+    }
+
+    suspend fun getCrawlDelay(url: String): Long? {
+        val uri = URI(url)
+        val domain = uri.host ?: return null
+        val rules = getRules(domain)
+        return rules?.crawlDelaySeconds
+    }
+
+    private suspend fun getRules(domain: String): RobotsRules? {
+        cache[domain]?.let { return it }
+
+        mutex.withLock {
+            cache[domain]?.let { return it }
+
+            return try {
+                val rules = client.get("${domain}/robots.txt").bodyAsText().let {
+                    parseRobots(it)
+                }
+                cache[domain] = rules
+                rules
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun parseRobots(content: String): RobotsRules {
+        val lines = content.lines()
+        var applies = false
+        val disallowed = mutableListOf<String>()
+        var crawlDelay: Long? = null
+
+        for (line in lines) {
+            val trimmed = line.trim()
+
+            when {
+                trimmed.startsWith("User-agent:", ignoreCase = true) -> {
+                    val agent = trimmed.substringAfter(":").trim()
+                    applies = agent == "*" || agent == userAgent
+                }
+
+                applies && trimmed.startsWith("Disallow:", ignoreCase = true) -> {
+                    val path = trimmed.substringAfter(":").trim()
+                    if (path.isNotEmpty()) disallowed.add(path)
+                }
+
+                applies && trimmed.startsWith("Crawl-delay:", ignoreCase = true) -> {
+                    crawlDelay = trimmed.substringAfter(":").trim().toLongOrNull()
+                }
+            }
+        }
+
+        return RobotsRules(disallowed, crawlDelay)
+    }
+}
+===== src/main/kotlin/services/JobService.kt =====
+package org.webscraper.services
+
+import kotlinx.coroutines.*
+import org.webscraper.db.JobRepository
+import org.webscraper.db.PageRepository
+import org.webscraper.models.Job
+
+class JobService(
+    private val jobRepository: JobRepository,
+    private val pageRepository: PageRepository,
+    private val crawlerService: CrawlerService
+) {
+     suspend fun worker(workerId: String) = coroutineScope {
+        while (isActive) {
+            try {
+                val job = jobRepository.claimJob(workerId)
+
+                if (job == null) {
+                    delay(2_000)
+                    continue
+                }
+
+                println("Claimed job ${job.id}")
+                processJob(job, workerId)
+            } catch (e: Exception) {
+                println("Worker error: ${e.message}")
+                delay(3_000)
+            }
+        }
+    }
+
+     suspend fun maintenance() = coroutineScope {
+        while (isActive) {
+            try {
+                jobRepository.reclaimStaleJobs()
+                pageRepository.reclaimStalePages()
+                delay(10_000)
+            } catch (e: Exception) {
+                println("Maintenance error: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun processJob(job: Job, workerId: String) = coroutineScope {
+        pageRepository.seedPages(job.id, job.seedUrls)
+
+        val heartbeatJob = launch {
+            while (isActive) {
+                if (!jobRepository.updateHeartbeat(job.id, workerId)) {
+                    throw CancellationException("Lost ownership of job ${job.id}")
+                }
+                delay(5_000)
+            }
+        }
+
+        try {
+            while (isActive) {
+                val page = pageRepository.claimNextPage(job.id) ?: break
+                try {
+                    val discoveredUrls = crawlerService.crawlSingle(
+                        page.url,
+                        page.depth,
+                        job.maxDepth
+                    )
+
+                    pageRepository.insertDiscovered(
+                        job.id,
+                        discoveredUrls,
+                        page.depth + 1
+                    )
+
+                    pageRepository.markCompleted(page.id)
+                } catch (e: Exception) {
+                    pageRepository.markFailed(page.id, e.message)
+                }
+            }
+
+            if (pageRepository.hasFailedPages(job.id)) {
+                jobRepository.markFailed(job.id, workerId, "One or more pages failed")
+            } else {
+                jobRepository.completeJob(job.id, workerId)
+            }
+
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            jobRepository.markFailed(job.id, workerId, e.message)
+        } finally {
+            heartbeatJob.cancelAndJoin()
+        }
+    }
+}
+===== src/main/kotlin/util/DomainThrottle.kt =====
+package org.webscraper.util
+
+import kotlinx.coroutines.sync.Mutex
+
+data class DomainThrottle(
+    val mutex: Mutex = Mutex(),
+    var lastRequestTime: Long = 0L
+)
+===== src/main/kotlin/util/RobotsRules.kt =====
+package org.webscraper.util
+
+data class RobotsRules(
+    val disallowed: List<String>,
+    val crawlDelaySeconds: Long?
+)
+
+===== src/main/kotlin/di/AppModule.kt =====
+package org.example.di
+
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import org.webscraper.db.Database
+import org.webscraper.db.JobRepository
+import org.webscraper.db.PageRepository
+import org.webscraper.services.CrawlerService
+import org.webscraper.services.JobService
+import org.webscraper.services.RobotsService
+import org.koin.dsl.module
+import javax.sql.DataSource
+
+val appModule = module {
+    single {
+        HttpClient(CIO) {
+            followRedirects = true
+            expectSuccess = false
+        }
+    }
+
+    single<DataSource> {
+        Database.dataSource
+    }
+
+    single {
+        JobRepository(get())
+    }
+
+    single {
+        PageRepository(get())
+    }
+
+    single {
+        JobService(
+            jobRepository = get(),
+            pageRepository = get(),
+            crawlerService = get()
+        )
+    }
+
+    single {
+        RobotsService(get())
+    }
+
+    single {
+        CrawlerService(
+            robotsService = get(),
+            client = get()
+        )
+    }
+}
+===== src/test/kotlin/services/RobotsServiceTest.kt =====
+package services
+
+import io.ktor.client.*
+import io.ktor.client.engine.mock.*
+import io.ktor.http.*
+import kotlinx.coroutines.test.runTest
+import org.webscraper.services.RobotsService
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.koin.test.KoinTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+class RobotsServiceTest : KoinTest {
+    @Test
+    fun `allows url not blocked by robots`() = runTest {
+        val mockEngine = MockEngine {
+            respond(
+                content = """
+                    User-agent: *
+                    Disallow:
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type" to listOf("text/plain"))
+            )
+        }
+
+        val client = HttpClient(mockEngine)
+        val service = RobotsService(client)
+        val result = service.isAllowed("https://example.com/page")
+
+        assertTrue(result)
+    }
+
+    @Test
+    fun `disallows url blocked by robots`() = runTest {
+        val mockEngine = MockEngine {
+            respond(
+                content = """
+                    User-agent: *
+                    Disallow: /admin
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type" to listOf("text/plain"))
+            )
+        }
+
+        val client = HttpClient(mockEngine)
+        val service = RobotsService(client)
+        val result = service.isAllowed("https://example.com/admin")
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun `returns delay amount when crawler delay exists in robots`() = runTest {
+        val mockEngine = MockEngine {
+            respond(
+                content = """
+                    User-agent: *
+                    Disallow:
+                    Crawl-delay: 5
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type" to listOf("text/plain"))
+            )
+        }
+
+        val client = HttpClient(mockEngine)
+        val service = RobotsService(client)
+        val result = service.getCrawlDelay("https://example.com/admin")
+
+        assertEquals(5, result)
+    }
+
+    @Test
+    fun `returns null when crawler delay does not exist in robots`() = runTest {
+        val mockEngine = MockEngine {
+            respond(
+                content = """
+                    User-agent: *
+                    Disallow:
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type" to listOf("text/plain"))
+            )
+        }
+
+        val client = HttpClient(mockEngine)
+        val service = RobotsService(client)
+        val result = service.getCrawlDelay("https://example.com/admin")
+
+        assertNull(result)
+    }
+}
+===== src/test/kotlin/services/CrawlerServiceTest.kt =====
+package services
+
+import io.ktor.client.*
+import io.ktor.client.engine.mock.*
+import io.ktor.http.*
+import io.mockk.coEvery
+import io.mockk.mockk
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
+import org.webscraper.services.CrawlerService
+import org.webscraper.services.RobotsService
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import kotlin.test.Test
+
+class CrawlerServiceTest {
+    @Test
+    fun `returns empty list when robots disallows`() = runTest {
+        val robots = mockk<RobotsService>()
+        val client = mockk<HttpClient>()
+
+        coEvery {
+            robots.isAllowed(any())
+        } returns false
+
+        val service = CrawlerService(robots, client)
+        val result = service.crawlSingle(
+            "https://example.com",
+            0,
+            2
+        )
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `returns extracted links as a list when robots allows`() = runTest {
+        val robots = mockk<RobotsService>()
+        val mockEngine = MockEngine {
+            respond(
+                content = """
+                    <html>
+                        <body>
+                            <a href="https://www.google.com"/>
+                            <a href="http://www.test.com"/>
+                            <a href="https://www.abc.xyz"/>
+                        </body>
+                    </html>
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type" to listOf("text/html"))
+            )
+        }
+
+        val client = HttpClient(mockEngine)
+
+        coEvery {
+            robots.isAllowed(any())
+        } returns true
+
+        coEvery {
+            robots.getCrawlDelay(any())
+        } returns null
+
+        val service = CrawlerService(robots, client)
+        val result = service.crawlSingle(
+            "https://example.com",
+            0,
+            2
+        )
+
+        assertEquals(
+            listOf(
+                "https://www.google.com",
+                "http://www.test.com",
+                "https://www.abc.xyz"
+            ),
+            result
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `throttles domain globally when headers contain crawler delay`() = runTest {
+        val robotsService = mockk<RobotsService>()
+
+        coEvery {
+            robotsService.isAllowed(any())
+        } returns true
+
+        coEvery {
+            robotsService.getCrawlDelay(any())
+        } returns 5
+
+        val mockEngine = MockEngine {
+            respond(
+                content = "<html></htlm>",
+                status = HttpStatusCode.OK
+            )
+        }
+
+        val client = HttpClient(mockEngine)
+        val service = CrawlerService(
+            robotsService,
+            client,
+            clock = { currentTime }
+        )
+
+        // First request should have no delay
+        service.crawlSingle(
+            "https://example.com",
+            0,
+            2
+        )
+
+        val timeAfterFirst = currentTime
+
+        // Second request should delay 5000ms
+        service.crawlSingle(
+            "https://example.com",
+            0,
+            2
+        )
+
+        val timeAfterSecond = currentTime
+
+        val elapsed = timeAfterSecond - timeAfterFirst
+
+        assertEquals(5000, elapsed)
+    }
+
+}
+===== src/test/kotlin/services/JobServiceTest.kt =====
+package services
+
+import org.junit.jupiter.api.Assertions.*
+
+class JobServiceTest {
+
+}
+===== src/test/kotlin/db/JobRepositoryTest.kt =====
+package db
+
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
+import org.webscraper.db.JobRepository
+import org.webscraper.db.Status
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInstance
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
+import java.io.File
+import java.sql.Connection
+import java.sql.ResultSet
+import javax.sql.DataSource
+import kotlin.test.Test
+
+@Testcontainers
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class JobRepositoryTest {
+    companion object {
+        private const val DB_SCHEMA_PATH = "src/test/resources/schema.sql"
+        private const val WORKER_ID = "worker-1"
+        private const val OTHER_WORKER_ID = "worker-2"
+        private const val RESULT_SET_STATUS_KEY = "status"
+        private const val RESULT_SET_ATTEMPT_COUNT_KEY = "attempt_count"
+        private const val SELECT_STATUS_FROM_JOBS = "SELECT status FROM jobs"
+        private const val SELECT_STATUS_AND_ATTEMPT_COUNT_FROM_JOBS = "SELECT attempt_count, status FROM jobs"
+
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16").apply {
+            withDatabaseName("jobs")
+            withUsername("jobs")
+            withPassword("jobs")
+        }
+    }
+
+    private lateinit var dataSource: DataSource
+    private lateinit var jobRepository: JobRepository
+
+    @BeforeAll
+    fun setup() {
+        val rawSchema = File(DB_SCHEMA_PATH).readText()
+        val cleanedSchema = rawSchema.lines()
+            .filterNot { it.startsWith("\\") }
+            .joinToString("\n")
+        postgres.createConnection("").use { conn ->
+            conn.createStatement().use { statement ->
+                statement.execute(cleanedSchema)
+            }
+        }
+
+        val config = HikariConfig().apply {
+            jdbcUrl = postgres.jdbcUrl
+            username = postgres.username
+            password = postgres.password
+            maximumPoolSize = 2
+        }
+
+        dataSource = HikariDataSource(config)
+        jobRepository = JobRepository(dataSource)
+    }
+
+    @BeforeEach
+    fun clean() {
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute("TRUNCATE jobs CASCADE")
+        }
+    }
+
+    @Test
+    fun `claimJob transitions PENDING to RUNNING`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)
+        assertNotNull(job)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `completeJob transitions RUNNING to COMPLETE when job is owned by worker`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+
+        jobRepository.completeJob(job.id, WORKER_ID)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.COMPLETED.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `completeJob does nothing when job is not owned by worker`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+
+        jobRepository.completeJob(job.id, OTHER_WORKER_ID)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `markFailed transitions RUNNING to PENDING when jobs attempt count is less than 3`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)
+
+        jobRepository.markFailed(job!!.id, WORKER_ID, null)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.PENDING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `markFailed does nothing when job is not currently claimed by a different worker`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        jobRepository.markFailed(job.id, OTHER_WORKER_ID, null)
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_AND_ATTEMPT_COUNT_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+            assertEquals(0, resultSet.getInt(RESULT_SET_ATTEMPT_COUNT_KEY))
+        }
+    }
+
+    @Test
+    fun `markFailed transitions RUNNING to FAILED when jobs attempt count is greater than or equal to 3`() {
+        seedJobRequest()
+
+        repeat(3) {
+            val job = jobRepository.claimJob(WORKER_ID)!!
+            jobRepository.markFailed(job.id, WORKER_ID, null)
+        }
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_AND_ATTEMPT_COUNT_FROM_JOBS)
+            assertEquals(Status.FAILED.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+            assertEquals(3, resultSet.getInt(RESULT_SET_ATTEMPT_COUNT_KEY))
+        }
+    }
+
+    @Test
+    fun `reclaimStaleJobs transitions RUNNING to PENDING when job has not been updated for 30 seconds`() {
+        seedJobRequest()
+
+        jobRepository.claimJob(WORKER_ID)
+        dataSource.connection.use { conn ->
+            conn.createStatement().executeUpdate("""
+                UPDATE jobs
+                SET heartbeat_at = NOW() - INTERVAL '31 seconds'
+            """.trimIndent())
+        }
+
+        jobRepository.reclaimStaleJobs()
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.PENDING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `updateHeartbeat updates heartbeat_at when worker owns job`() {
+        seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        val wasUpdated = jobRepository.updateHeartbeat(job.id, WORKER_ID)
+        assertTrue(wasUpdated)
+    }
+
+    @Test
+    fun `updateHeartbeat does not update heartbeat_at when worker does not own job`() {
+        seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        val wasUpdated = jobRepository.updateHeartbeat(job.id, OTHER_WORKER_ID)
+        assertFalse(wasUpdated)
+    }
+
+    private fun seedJobRequest() {
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute("""
+                INSERT INTO jobs (id, status, seed_urls, max_depth)
+                VALUES (
+                    gen_random_uuid(),
+                    '${Status.PENDING.name}',
+                    '["https://example.com"]',
+                    1
+                )
+            """.trimIndent())
+        }
+    }
+
+    private fun getItemFromDB(conn: Connection,query: String): ResultSet {
+        val resultSet = conn.createStatement().executeQuery(query)
+        resultSet.next()
+        return resultSet
+    }
+}
+===== src/test/kotlin/db/PageRepositoryTest.kt =====
+package db
+
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInstance
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
+import org.webscraper.db.JobRepository
+import org.webscraper.db.PageRepository
+import org.webscraper.db.Status
+import java.io.File
+import java.util.UUID
+import javax.sql.DataSource
+import kotlin.test.Test
+
+@Testcontainers
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class PageRepositoryTest {
+    companion object {
+        private const val DB_SCHEMA_PATH = "src/test/resources/schema.sql"
+        private const val WORKER_ID = "worker-1"
+        private const val OTHER_WORKER_ID = "worker-2"
+        private const val RESULT_SET_STATUS_KEY = "status"
+
+        private val validUrls = listOf(
+            "https://example.com",
+            "http://abc.xyz",
+            "https://google.com"
+        )
+
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer("postgres:16").apply {
+            withDatabaseName("jobs")
+            withUsername("jobs")
+            withPassword("jobs")
+        }
+    }
+
+    private lateinit var dataSource: DataSource
+    private lateinit var jobRepository: JobRepository
+    private lateinit var pageRepository: PageRepository
+
+    @BeforeAll
+    fun setup() {
+        val rawSchema = File(DB_SCHEMA_PATH).readText()
+        val cleanedSchema = rawSchema.lines()
+            .filterNot { it.startsWith("\\") }
+            .joinToString("\n")
+
+        postgres.createConnection("").use { conn ->
+            conn.createStatement().use { statement ->
+                statement.execute(cleanedSchema)
+            }
+        }
+
+        val config = HikariConfig().apply {
+            jdbcUrl = postgres.jdbcUrl
+            username = postgres.username
+            password = postgres.password
+            maximumPoolSize = 2
+        }
+
+        dataSource = HikariDataSource(config)
+        jobRepository = JobRepository(dataSource)
+        pageRepository = PageRepository(dataSource)
+    }
+
+    @BeforeEach
+    fun clean() {
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute("TRUNCATE jobs CASCADE")
+        }
+    }
+
+    @Test
+    fun `seedPages inserts new pages into pages table`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages")
+            resultSet.next()
+
+            // Get value of first returned row.
+            assertEquals(3, resultSet.getInt(1))
+        }
+    }
+
+    @Test
+    fun `claimNextPage transitions statues PENDING to RUNNING when job id matches`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        pageRepository.claimNextPage(job.id)
+
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages WHERE status = '${Status.RUNNING.name}'")
+            resultSet.next()
+            assertEquals(1, resultSet.getInt(1))
+        }
+    }
+
+    @Test
+    fun `insertDiscovered does not add urls into pages when urls have been seen by current job`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        pageRepository.insertDiscovered(job.id, validUrls, 1)
+
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages")
+            resultSet.next()
+            assertEquals(3, resultSet.getInt(1))
+        }
+    }
+
+    @Test
+    fun `insertDiscovered add urls into pages when urls have not been seen by current job`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        pageRepository.insertDiscovered(
+            job.id,
+            listOf("https://youtube.com", "http://test.com"),
+            1
+        )
+
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages")
+            resultSet.next()
+            assertEquals(5, resultSet.getInt(1))
+        }
+    }
+
+    @Test
+    fun `markComplete transitions status RUNNING to COMPLETE`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        val page = pageRepository.claimNextPage(job.id)!!
+        val result = pageRepository.markCompleted(page.id)
+        assertTrue(result)
+    }
+
+    @Test
+    fun `markFailed transitions status RUNNING to FAILED`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        val page = pageRepository.claimNextPage(job.id)!!
+        val result = pageRepository.markFailed(page.id, null)
+        assertTrue(result)
+    }
+
+    @Test
+    fun `hasUnfinishedPages returns true when a job has pages of status PENDING or RUNNING`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        pageRepository.claimNextPage(job.id)!!
+        val result = pageRepository.hasUnfinishedPages(job.id)
+        assertTrue(result)
+    }
+
+    @Test
+    fun `hasUnfinishedPages returns false when a job has no pages of status PENDING or RUNNING`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        val page = pageRepository.claimNextPage(job.id)!!
+        pageRepository.markFailed(page.id, null)
+
+        val result = pageRepository.hasUnfinishedPages(job.id)
+        assertFalse(result)
+    }
+
+    @Test
+    fun `hasFailedPages returns true when a job has pages of status FAILED`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        val page = pageRepository.claimNextPage(job.id)!!
+        pageRepository.markFailed(page.id, null)
+
+        val result = pageRepository.hasFailedPages(job.id)
+        assertTrue(result)
+    }
+
+    @Test
+    fun `hasFailedPages returns false when a job has no pages of status FAILED`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        pageRepository.claimNextPage(job.id)!!
+
+        val result = pageRepository.hasFailedPages(job.id)
+        assertFalse(result)
+    }
+
+    @Test
+    fun `reclaimStalePages transitions RUNNING to PENDING when created_at is 30 seconds from current time`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        pageRepository.claimNextPage(job.id)
+        dataSource.connection.use { conn ->
+            conn.createStatement().executeUpdate("""
+                UPDATE pages
+                SET created_at = NOW() - INTERVAL '31 seconds'
+            """.trimIndent())
+        }
+
+        pageRepository.reclaimStalePages()
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT status FROM pages")
+            resultSet.next()
+            assertEquals(Status.PENDING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `reclaimStalePages does nothing when created_at is less than 30 seconds from now`() {
+        seedJobRequest()
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        pageRepository.claimNextPage(job.id)
+
+        pageRepository.reclaimStalePages()
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT status FROM pages WHERE status = '${Status.RUNNING.name}'")
+            resultSet.next()
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    private fun seedJobRequest() {
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute("""
+                INSERT INTO jobs (id, status, seed_urls, max_depth)
+                VALUES (
+                    gen_random_uuid(),
+                    '${Status.PENDING.name}',
+                    '["https://example.com"]',
+                    1
+                )
+            """.trimIndent())
+        }
+    }
+}

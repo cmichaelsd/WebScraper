@@ -4,15 +4,14 @@ import kotlinx.coroutines.*
 import org.webscraper.db.JobRepository
 import org.webscraper.db.PageRepository
 import org.webscraper.models.Job
-import org.webscraper.shuttingDown
 
 class JobService(
     private val jobRepository: JobRepository,
     private val pageRepository: PageRepository,
     private val crawlerService: CrawlerService
 ) {
-     suspend fun worker(workerId: String) {
-        while (!shuttingDown) {
+     suspend fun worker(workerId: String) = coroutineScope {
+        while (isActive) {
             try {
                 val job = jobRepository.claimJob(workerId)
 
@@ -30,8 +29,8 @@ class JobService(
         }
     }
 
-     suspend fun maintenance() {
-        while (!shuttingDown) {
+     suspend fun maintenance() = coroutineScope {
+        while (isActive) {
             try {
                 jobRepository.reclaimStaleJobs()
                 pageRepository.reclaimStalePages()
@@ -42,45 +41,52 @@ class JobService(
         }
     }
 
-    private suspend fun processJob(
-        job: Job,
-        workerId: String
-    ) {
-        coroutineScope {
+    private suspend fun processJob(job: Job, workerId: String) = coroutineScope {
+        pageRepository.seedPages(job.id, job.seedUrls)
 
-            pageRepository.seedPages(job.id, job.seedUrls)
+        val heartbeatJob = launch {
+            while (isActive) {
+                if (!jobRepository.updateHeartbeat(job.id, workerId)) {
+                    throw CancellationException("Lost ownership of job ${job.id}")
+                }
+                delay(5_000)
+            }
+        }
 
-            val heartbeatJob = launch {
-                while (isActive) {
-                    jobRepository.updateHeartbeat(job.id, workerId)
-                    delay(5_000)
+        try {
+            while (isActive) {
+                val page = pageRepository.claimNextPage(job.id) ?: break
+                try {
+                    val discoveredUrls = crawlerService.crawlSingle(
+                        page.url,
+                        page.depth,
+                        job.maxDepth
+                    )
+
+                    pageRepository.insertDiscovered(
+                        job.id,
+                        discoveredUrls,
+                        page.depth + 1
+                    )
+
+                    pageRepository.markCompleted(page.id)
+                } catch (e: Exception) {
+                    pageRepository.markFailed(page.id, e.message)
                 }
             }
 
-            try {
-                while (true) {
-                    val page = pageRepository.claimNextPage(job.id) ?: break
-                    try {
-                        val discoveredUrls = crawlerService.crawlSingle(page.url, page.depth, job.maxDepth)
-                        pageRepository.insertDiscovered(job.id, discoveredUrls, page.depth + 1)
-                        pageRepository.markCompleted(page.id)
-                    } catch (e: Exception) {
-                        pageRepository.markFailed(page.id, e.stackTraceToString())
-                    }
-                }
-
-                if (!pageRepository.hasUnfinishedPages(job.id)) {
-                    if (pageRepository.hasFailedPages(job.id)) {
-                        jobRepository.markFailed(job.id, workerId, "One or more pages failed")
-                    } else {
-                        jobRepository.completeJob(job.id, workerId)
-                    }
-                }
-            } catch (e: Exception) {
-                jobRepository.markFailed(job.id, workerId, e.message)
-            } finally {
-                heartbeatJob.cancelAndJoin()
+            if (pageRepository.hasFailedPages(job.id)) {
+                jobRepository.markFailed(job.id, workerId, "One or more pages failed")
+            } else {
+                jobRepository.completeJob(job.id, workerId)
             }
+
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            jobRepository.markFailed(job.id, workerId, e.message)
+        } finally {
+            heartbeatJob.cancelAndJoin()
         }
     }
 }

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- -------------------------------------------------------------
+         Console appender – prints to STDOUT (the default for Docker /
+         Kubernetes containers). Adjust the pattern as you like.
+         ------------------------------------------------------------- -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+    <!-- Example pattern:
+         %d{yyyy-MM-dd HH:mm:ss.SSS}  → timestamp
+         [%thread]                    → coroutine/thread name
+         %-5level                      → log level (INFO, WARN,…)
+         %logger{36}                  → logger name (up to 36 chars)
+         - %msg%n                      → the actual message */
+    <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+</encoder>
+</appender>
+
+<!-- -------------------------------------------------------------
+ Root logger – everything goes to STDOUT unless a more specific
+ logger overrides the level.
+ ------------------------------------------------------------- -->
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <!-- -------------------------------------------------------------
+         Example of a more verbose logger for a specific package.
+         Uncomment if you need DEBUG output for a particular class.
+         ------------------------------------------------------------- -->
+    <!--
+    <logger name="org.webscraper.services" level="DEBUG"/>
+    -->
+
+</configuration>
