@@ -25,7 +25,7 @@ class RobotsService(private val client: HttpClient) {
         val domain = uri.host ?: return true
         val path = uri.path.ifBlank { "/" }
 
-        val rules = getRules(domain) ?: return true
+        val rules = getRules(domain) ?: return false
 
         return rules.disallowed.none {
             path.startsWith(it)
@@ -61,6 +61,7 @@ class RobotsService(private val client: HttpClient) {
                 rules
             } catch (e: Exception) {
                 logger.warn("getRules: Failed to fetch robots.txt for $domain - ${e.message}. Disallowing by default.")
+                cache[domain] = CachedEntry(null, Instant.now()) // cache the failure
                 null
             }
         }
