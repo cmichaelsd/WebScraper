@@ -36,6 +36,7 @@ module "ecs" {
   api_sg_id          = module.security_groups.api_sg_id
   worker_sg_id       = module.security_groups.worker_sg_id
   target_group_arn   = module.alb.target_group_arn
+  db_secret_arn      = module.rds.db_secret_arn
 }
 
 module "alb" {

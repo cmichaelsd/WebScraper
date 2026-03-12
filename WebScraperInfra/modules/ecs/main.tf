@@ -39,6 +39,32 @@ resource "aws_cloudwatch_log_group" "worker" {
   retention_in_days = 7
 }
 
+resource "aws_secretsmanager_secret" "api_database_url" {
+  name = "${var.project_name}-api-database-url"
+}
+
+resource "aws_secretsmanager_secret_version" "api_database_url" {
+  secret_id     = aws_secretsmanager_secret.api_database_url.id
+  secret_string = local.asyncpg_url
+}
+
+resource "aws_iam_role_policy" "secrets_access" {
+  name = "${var.project_name}-secrets-access"
+  role = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "secretsmanager:GetSecretValue"
+      Resource = [
+        var.db_secret_arn,
+        aws_secretsmanager_secret.api_database_url.arn
+      ]
+    }]
+  })
+}
+
 resource "aws_ecs_task_definition" "api" {
   family                   = "${var.project_name}-api"
   network_mode             = "awsvpc"
@@ -60,10 +86,10 @@ resource "aws_ecs_task_definition" "api" {
         }
       ]
 
-      environment = [
+      secrets = [
         {
-          name  = "DATABASE_URL"
-          value = local.asyncpg_url
+          name      = "DATABASE_URL"
+          valueFrom = aws_secretsmanager_secret.api_database_url.arn
         }
       ]
 
@@ -97,18 +123,21 @@ resource "aws_ecs_task_definition" "worker" {
         {
           name  = "JDBC_URL"
           value = local.jdbc_url
+        }
+        # {
+        #   name  = "WORKER_ID"
+        #   value = "worker-1"
+        # }
+      ]
+
+      secrets = [
+        {
+          name      = "DB_USER"
+          valueFrom = "${var.db_secret_arn}:username::"
         },
         {
-          name  = "DB_USER"
-          value = var.db_username
-        },
-        {
-          name  = "DB_PASSWORD"
-          value = var.db_password
-        },
-        {
-          name  = "WORKER_ID"
-          value = "worker-1"
+          name      = "DB_PASSWORD"
+          valueFrom = "${var.db_secret_arn}:password::"
         }
       ]
 

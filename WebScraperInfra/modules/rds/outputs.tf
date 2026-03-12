@@ -14,3 +14,7 @@ output "db_password" {
   value     = random_password.db.result
   sensitive = true
 }
+
+output "db_secret_arn" {
+  value = aws_secretsmanager_secret.db_credentials.arn
+}

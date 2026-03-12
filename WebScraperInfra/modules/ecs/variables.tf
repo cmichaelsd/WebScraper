@@ -49,3 +49,7 @@ variable "worker_sg_id" {
 variable "target_group_arn" {
   type = string
 }
+
+variable "db_secret_arn" {
+  type = string
+}
