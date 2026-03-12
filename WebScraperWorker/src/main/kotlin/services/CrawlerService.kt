@@ -5,9 +5,7 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import org.webscraper.util.DomainThrottle
 import java.net.URI
 
@@ -59,7 +57,7 @@ class CrawlerService(
                 }
 
                 val html = response.bodyAsText()
-                return extractLinks(html)
+                return extractLinks(html, url)
 
             } catch (e: Exception) {
                 delay(backoff.coerceAtMost(MAX_BACKOFF_MS))
@@ -93,10 +91,36 @@ class CrawlerService(
         }
     }
 
-    private fun extractLinks(html: String): List<String> {
-        val regex = Regex("""href=["'](https?://[^"']+)["']""")
+    private fun extractLinks(html: String, baseUrl: String): List<String> {
+        val base = URI(baseUrl)
+        val regex = Regex("""href=["']([^"']+)["']""")
         return regex.findAll(html)
-            .map { it.groupValues[1] }
+            .map { it.groupValues[1].substringBefore('#') }
+            .filter { it.isNotBlank() }
+            .mapNotNull { href ->
+                try {
+                    val resolved = base.resolve(href)
+                    if (resolved.scheme in listOf("http", "https")) {
+                        normalizeUrl(resolved)
+                    } else {
+                        null
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            .distinct()
             .toList()
+    }
+
+    private fun normalizeUrl(uri: URI): String {
+        val path = uri.path.trimEnd('/').ifEmpty { "/" }
+        return URI(
+            uri.scheme.lowercase(),
+            uri.authority?.lowercase(),
+            path,
+            uri.query,
+            null
+        ).toString()
     }
 }
