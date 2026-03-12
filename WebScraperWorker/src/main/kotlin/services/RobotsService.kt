@@ -60,7 +60,7 @@ class RobotsService(private val client: HttpClient) {
                 cache[domain] = CachedEntry(rules, Instant.now())
                 rules
             } catch (e: Exception) {
-                logger.warn("getRules: Failed to fetch robots.txt for $domain - ${e.message}. Disallowing by default.")
+                logger.warn("getRules: Failed to fetch robots.txt for $domain - ${e.message}. Disallowing.")
                 cache[domain] = CachedEntry(null, Instant.now()) // cache the failure
                 null
             }
