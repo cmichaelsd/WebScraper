@@ -35,9 +35,9 @@ class Page(Base):
 
     status = Column(Enum(Status, native_enum=False), nullable=False, server_default=Status.PENDING)
 
-    discovered_at = Column(DateTime(timezone=True), server_default=func.now())
-
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
 
     error = Column(Text, nullable=True)
 

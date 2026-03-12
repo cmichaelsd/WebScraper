@@ -26,6 +26,7 @@ If the schema for the DB is changed ensure that the following commands are ran:
 - `alembic upgrade head`
 
 ## How to create a psql dump which is required for WebScraper Worker tests:
+Ensure API container is running and run the following:
 `docker exec -t job-db pg_dump --schema-only --no-owner --no-privileges -U jobs jobs > schema.sql`
 
 Place output in WebScraperWorker at `src/test/resources/schema.sql`
