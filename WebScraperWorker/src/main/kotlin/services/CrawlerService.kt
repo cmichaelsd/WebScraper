@@ -3,6 +3,7 @@ package org.webscraper.services
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -47,7 +48,7 @@ class CrawlerService(
 
                 val status = response.status.value
 
-                if (status == 429 || status == 503) {
+                if (status == HttpStatusCode.TooManyRequests.value || status == HttpStatusCode.ServiceUnavailable.value) {
                     val retryAfterHeader = response.headers["Retry-After"]
                     val retryAfterSeconds = retryAfterHeader?.toLongOrNull()
                     val waitTime = retryAfterSeconds?.times(1000) ?: backoff.coerceAtMost(MAX_BACKOFF_MS)

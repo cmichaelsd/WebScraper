@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ffhU8xY2irxf5duiKv5sIA4BWamlbxX74cUB8TXWdbHNX1mV9lEYSNn9pD8po3m
+\restrict U3w6DZ8SlcairBkmq5329ugrYNalVVwseGUzeH5w7YBNddZvudzW0cNUVywGKdo
 
 -- Dumped from database version 16.11 (Debian 16.11-1.pgdg13+1)
 -- Dumped by pg_dump version 16.11 (Debian 16.11-1.pgdg13+1)
@@ -63,8 +63,8 @@ CREATE TABLE public.pages (
     url text NOT NULL,
     depth integer NOT NULL,
     status character varying(9) DEFAULT 'PENDING'::character varying NOT NULL,
-    discovered_at timestamp with time zone DEFAULT now(),
     created_at timestamp with time zone DEFAULT now(),
+    claimed_at timestamp with time zone,
     error text
 );
 
@@ -120,5 +120,5 @@ ALTER TABLE ONLY public.pages
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ffhU8xY2irxf5duiKv5sIA4BWamlbxX74cUB8TXWdbHNX1mV9lEYSNn9pD8po3m
+\unrestrict U3w6DZ8SlcairBkmq5329ugrYNalVVwseGUzeH5w7YBNddZvudzW0cNUVywGKdo
 

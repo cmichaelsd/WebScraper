@@ -13,7 +13,6 @@ import org.webscraper.db.JobRepository
 import org.webscraper.db.PageRepository
 import org.webscraper.db.Status
 import java.io.File
-import java.util.UUID
 import javax.sql.DataSource
 import kotlin.test.Test
 
@@ -214,7 +213,7 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `reclaimStalePages transitions RUNNING to PENDING when created_at is 30 seconds from current time`() {
+    fun `reclaimStalePages transitions RUNNING to PENDING when claimed_at is 30 seconds from current time`() {
         seedJobRequest()
 
         val job = jobRepository.claimJob(WORKER_ID)!!
@@ -223,7 +222,7 @@ class PageRepositoryTest {
         dataSource.connection.use { conn ->
             conn.createStatement().executeUpdate("""
                 UPDATE pages
-                SET created_at = NOW() - INTERVAL '31 seconds'
+                SET claimed_at = NOW() - INTERVAL '31 seconds'
             """.trimIndent())
         }
 
@@ -236,7 +235,7 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `reclaimStalePages does nothing when created_at is less than 30 seconds from now`() {
+    fun `reclaimStalePages does nothing when claimed_at is less than 30 seconds from now`() {
         seedJobRequest()
 
         val job = jobRepository.claimJob(WORKER_ID)!!

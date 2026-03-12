@@ -35,7 +35,8 @@ class PageRepository(private val dataSource: DataSource) {
 
         val sql = """
             UPDATE pages
-            SET status = '${Status.RUNNING.name}'
+            SET status = '${Status.RUNNING.name}',
+                claimed_at = NOW()
             WHERE id = (
                 SELECT id FROM pages
                 WHERE job_id = ?
@@ -104,7 +105,7 @@ class PageRepository(private val dataSource: DataSource) {
     fun markFailed(pageId: UUID, error: String?): Boolean = withConn { conn ->
         val sql = """
             UPDATE pages
-        SET status = '${Status.FAILED.name}',
+            SET status = '${Status.FAILED.name}',
                 error = ?
             WHERE id = ?
         """.trimIndent()
@@ -149,9 +150,10 @@ class PageRepository(private val dataSource: DataSource) {
     fun reclaimStalePages() = withConn { conn ->
         val sql = """
             UPDATE pages
-            SET status = '${Status.PENDING.name}'
+            SET status = '${Status.PENDING.name}',
+                claimed_at = NULL
             WHERE status = '${Status.RUNNING.name}'
-              AND created_at < NOW() - INTERVAL '30 seconds'
+              AND claimed_at < NOW() - INTERVAL '30 seconds'
         """.trimIndent()
 
         conn.prepareStatement(sql).use {
