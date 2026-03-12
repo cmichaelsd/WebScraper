@@ -9,6 +9,7 @@ import org.webscraper.services.JobService
 import org.koin.core.context.startKoin
 import org.koin.java.KoinJavaComponent.getKoin
 import org.slf4j.LoggerFactory
+import java.util.UUID
 
 private val logger = LoggerFactory.getLogger("org.webscraper.Main")
 
@@ -22,7 +23,7 @@ fun main(): Unit = runBlocking {
     }
     logger.info("Koin started – DI graph initialised")
 
-    val workerId = System.getenv("WORKER_ID") ?: "worker-local"
+    val workerId = System.getenv("WORKER_ID") ?: "worker-${UUID.randomUUID()}"
     logger.info("Worker starting with ID '{}'", workerId)
 
     Runtime.getRuntime().addShutdownHook(Thread {
