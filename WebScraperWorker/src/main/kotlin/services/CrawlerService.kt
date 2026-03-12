@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withLock
 import org.webscraper.util.DomainThrottle
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 
 class CrawlerService(
     private val robotsService: RobotsService,
@@ -19,9 +20,11 @@ class CrawlerService(
         private const val MAX_RETRIES = 5
         private const val INITIAL_BACK_OFF_MS = 2000L
         private const val MAX_BACKOFF_MS = 60_000L
+        private const val MAX_DOMAIN_ENTRIES = 5000
+        private const val DOMAIN_EVICT_AGE_MS = 300_000L  // 5 minutes
     }
 
-    private val domainLimiters = mutableMapOf<String, DomainThrottle>()
+    private val domainLimiters = ConcurrentHashMap<String, DomainThrottle>()
 
     suspend fun crawlSingle(
         url: String,
@@ -71,6 +74,11 @@ class CrawlerService(
 
     private suspend fun throttleDomain(url: String) {
         val domain = URI(url).host ?: return
+
+        if (domainLimiters.size > MAX_DOMAIN_ENTRIES) {
+            val cutoff = clock() - DOMAIN_EVICT_AGE_MS
+            domainLimiters.entries.removeIf { it.value.lastRequestTime < cutoff }
+        }
 
         val limiter = domainLimiters.computeIfAbsent(domain) {
             DomainThrottle()
