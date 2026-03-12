@@ -3,7 +3,7 @@ package org.webscraper.services
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.http.HttpStatusCode
+import io.ktor.http.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -23,7 +23,6 @@ class CrawlerService(
         private const val MAX_BACKOFF_MS = 60_000L
     }
 
-    private val globalLimiter = Semaphore(5)
     private val domainLimiters = mutableMapOf<String, DomainThrottle>()
 
     suspend fun crawlSingle(
@@ -42,9 +41,8 @@ class CrawlerService(
             try {
                 throttleDomain(url)
 
-                val response: HttpResponse = globalLimiter.withPermit {
-                    client.get(url)
-                }
+                val response: HttpResponse = client.get(url)
+
 
                 val status = response.status.value
 

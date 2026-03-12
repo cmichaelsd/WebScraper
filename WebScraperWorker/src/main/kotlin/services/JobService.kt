@@ -1,9 +1,11 @@
 package org.webscraper.services
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
 import org.webscraper.db.JobRepository
 import org.webscraper.db.PageRepository
 import org.webscraper.models.Job
+import java.util.concurrent.atomic.AtomicInteger
 
 class JobService(
     private val jobRepository: JobRepository,
@@ -54,24 +56,32 @@ class JobService(
         }
 
         try {
+            val semaphore = Semaphore(5)
+            val inFlight = AtomicInteger(0)
+
             while (isActive) {
-                val page = pageRepository.claimNextPage(job.id) ?: break
-                try {
-                    val discoveredUrls = crawlerService.crawlSingle(
-                        page.url,
-                        page.depth,
-                        job.maxDepth
-                    )
+                semaphore.acquire()
+                val page = pageRepository.claimNextPage(job.id)
 
-                    pageRepository.insertDiscovered(
-                        job.id,
-                        discoveredUrls,
-                        page.depth + 1
-                    )
+                if (page == null) {
+                    semaphore.release()
+                    if (inFlight.get() == 0) break
+                    delay(500)
+                    continue
+                }
 
-                    pageRepository.markCompleted(page.id)
-                } catch (e: Exception) {
-                    pageRepository.markFailed(page.id, e.message)
+                inFlight.incrementAndGet()
+                launch {
+                    try {
+                        val discoveredUrls = crawlerService.crawlSingle(page.url, page.depth, job.maxDepth)
+                        pageRepository.insertDiscovered(job.id, discoveredUrls, page.depth + 1)
+                        pageRepository.markCompleted(page.id)
+                    } catch (e: Exception) {
+                        pageRepository.markFailed(page.id, e.message)
+                    } finally {
+                        inFlight.decrementAndGet()
+                        semaphore.release()
+                    }
                 }
             }
 
