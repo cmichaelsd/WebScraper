@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 
 class PageResponse(BaseModel):
@@ -11,8 +11,8 @@ class PageResponse(BaseModel):
     url: str
     depth: int
     status: str
-    discovered_at: datetime
     created_at: datetime
+    claimed_at: Optional[datetime]
     error: Optional[str]
 
     class Config:
