@@ -1,6 +1,6 @@
 package org.webscraper.services
 
-import io.ktor.client.*
+import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.sync.Mutex
@@ -25,7 +25,7 @@ class RobotsService(private val client: HttpClient) {
         val domain = uri.host ?: return true
         val path = uri.path.ifBlank { "/" }
 
-        val rules = getRules(domain) ?: return false
+        val rules = getRules(domain) ?: return true
 
         return rules.disallowed.none {
             path.startsWith(it)
@@ -54,13 +54,14 @@ class RobotsService(private val client: HttpClient) {
             }
 
             return try {
-                val rules = client.get("https://${domain}/robots.txt").bodyAsText().let {
-                    parseRobots(it)
-                }
+                val rules =
+                    client.get("https://$domain/robots.txt").bodyAsText().let {
+                        parseRobots(it)
+                    }
                 cache[domain] = CachedEntry(rules, Instant.now())
                 rules
             } catch (e: Exception) {
-                logger.warn("getRules: Failed to fetch robots.txt for $domain - ${e.message}. Disallowing.")
+                logger.warn("getRules: Failed to fetch robots.txt for $domain - ${e.message}. Allowing.")
                 cache[domain] = CachedEntry(null, Instant.now()) // cache the failure
                 null
             }

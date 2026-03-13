@@ -1,7 +1,13 @@
 package org.webscraper.services
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import org.slf4j.LoggerFactory
 import org.webscraper.db.JobRepository
 import org.webscraper.db.PageRepository
 import org.webscraper.models.Job
@@ -10,50 +16,59 @@ import java.util.concurrent.atomic.AtomicInteger
 class JobService(
     private val jobRepository: JobRepository,
     private val pageRepository: PageRepository,
-    private val crawlerService: CrawlerService
+    private val crawlerService: CrawlerService,
 ) {
-     suspend fun worker(workerId: String) = coroutineScope {
-        while (isActive) {
-            try {
-                val job = jobRepository.claimJob(workerId)
+    private val logger = LoggerFactory.getLogger(JobService::class.java)
 
-                if (job == null) {
-                    delay(2_000)
-                    continue
+    suspend fun worker(workerId: String) =
+        coroutineScope {
+            while (isActive) {
+                try {
+                    val job = jobRepository.claimJob(workerId)
+
+                    if (job == null) {
+                        delay(2_000)
+                        continue
+                    }
+
+                    logger.info("Claimed job ${job.id}")
+                    processJob(job, workerId)
+                } catch (e: Exception) {
+                    logger.warn("Worker error: ${e.message}")
+                    delay(3_000)
+                }
+            }
+        }
+
+    suspend fun maintenance() =
+        coroutineScope {
+            while (isActive) {
+                try {
+                    jobRepository.reclaimStaleJobs()
+                    pageRepository.reclaimStalePages()
+                } catch (e: Exception) {
+                    logger.warn("Maintenance error: ${e.message}")
                 }
 
-                println("Claimed job ${job.id}")
-                processJob(job, workerId)
-            } catch (e: Exception) {
-                println("Worker error: ${e.message}")
-                delay(3_000)
-            }
-        }
-    }
-
-     suspend fun maintenance() = coroutineScope {
-        while (isActive) {
-            try {
-                jobRepository.reclaimStaleJobs()
-                pageRepository.reclaimStalePages()
                 delay(10_000)
-            } catch (e: Exception) {
-                println("Maintenance error: ${e.message}")
             }
         }
-    }
 
-    private suspend fun processJob(job: Job, workerId: String) = coroutineScope {
+    private suspend fun processJob(
+        job: Job,
+        workerId: String,
+    ) = coroutineScope {
         pageRepository.seedPages(job.id, job.seedUrls)
 
-        val heartbeatJob = launch {
-            while (isActive) {
-                if (!jobRepository.updateHeartbeat(job.id, workerId)) {
-                    throw CancellationException("Lost ownership of job ${job.id}")
+        val heartbeatJob =
+            launch {
+                while (isActive) {
+                    if (!jobRepository.updateHeartbeat(job.id, workerId)) {
+                        throw CancellationException("Lost ownership of job ${job.id}") as Throwable
+                    }
+                    delay(5_000)
                 }
-                delay(5_000)
             }
-        }
 
         try {
             val semaphore = Semaphore(5)
@@ -90,7 +105,6 @@ class JobService(
             } else {
                 jobRepository.completeJob(job.id, workerId)
             }
-
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

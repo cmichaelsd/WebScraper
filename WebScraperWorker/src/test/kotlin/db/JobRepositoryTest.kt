@@ -2,20 +2,23 @@ package db
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import org.webscraper.db.JobRepository
-import org.webscraper.db.Status
-import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInstance
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import org.webscraper.db.JobRepository
+import org.webscraper.db.Status
 import java.io.File
 import java.sql.Connection
 import java.sql.ResultSet
 import javax.sql.DataSource
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -31,11 +34,12 @@ class JobRepositoryTest {
 
         @Container
         @JvmStatic
-        val postgres = PostgreSQLContainer("postgres:16").apply {
-            withDatabaseName("jobs")
-            withUsername("jobs")
-            withPassword("jobs")
-        }
+        val postgres =
+            PostgreSQLContainer("postgres:16").apply {
+                withDatabaseName("jobs")
+                withUsername("jobs")
+                withPassword("jobs")
+            }
     }
 
     private lateinit var dataSource: DataSource
@@ -44,21 +48,23 @@ class JobRepositoryTest {
     @BeforeAll
     fun setup() {
         val rawSchema = File(DB_SCHEMA_PATH).readText()
-        val cleanedSchema = rawSchema.lines()
-            .filterNot { it.startsWith("\\") }
-            .joinToString("\n")
+        val cleanedSchema =
+            rawSchema.lines()
+                .filterNot { it.startsWith("\\") }
+                .joinToString("\n")
         postgres.createConnection("").use { conn ->
             conn.createStatement().use { statement ->
                 statement.execute(cleanedSchema)
             }
         }
 
-        val config = HikariConfig().apply {
-            jdbcUrl = postgres.jdbcUrl
-            username = postgres.username
-            password = postgres.password
-            maximumPoolSize = 2
-        }
+        val config =
+            HikariConfig().apply {
+                jdbcUrl = postgres.jdbcUrl
+                username = postgres.username
+                password = postgres.password
+                maximumPoolSize = 2
+            }
 
         dataSource = HikariDataSource(config)
         jobRepository = JobRepository(dataSource)
@@ -162,10 +168,12 @@ class JobRepositoryTest {
 
         jobRepository.claimJob(WORKER_ID)
         dataSource.connection.use { conn ->
-            conn.createStatement().executeUpdate("""
+            conn.createStatement().executeUpdate(
+                """
                 UPDATE jobs
                 SET heartbeat_at = NOW() - INTERVAL '31 seconds'
-            """.trimIndent())
+                """.trimIndent(),
+            )
         }
 
         jobRepository.reclaimStaleJobs()
@@ -193,7 +201,8 @@ class JobRepositoryTest {
 
     private fun seedJobRequest() {
         dataSource.connection.use { conn ->
-            conn.createStatement().execute("""
+            conn.createStatement().execute(
+                """
                 INSERT INTO jobs (id, status, seed_urls, max_depth)
                 VALUES (
                     gen_random_uuid(),
@@ -201,11 +210,15 @@ class JobRepositoryTest {
                     '["https://example.com"]',
                     1
                 )
-            """.trimIndent())
+                """.trimIndent(),
+            )
         }
     }
 
-    private fun getItemFromDB(conn: Connection,query: String): ResultSet {
+    private fun getItemFromDB(
+        conn: Connection,
+        query: String,
+    ): ResultSet {
         val resultSet = conn.createStatement().executeQuery(query)
         resultSet.next()
         return resultSet

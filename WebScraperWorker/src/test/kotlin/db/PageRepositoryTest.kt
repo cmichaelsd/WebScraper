@@ -2,7 +2,6 @@ package db
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInstance
@@ -15,6 +14,9 @@ import org.webscraper.db.Status
 import java.io.File
 import javax.sql.DataSource
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -25,19 +27,21 @@ class PageRepositoryTest {
         private const val OTHER_WORKER_ID = "worker-2"
         private const val RESULT_SET_STATUS_KEY = "status"
 
-        private val validUrls = listOf(
-            "https://example.com",
-            "http://abc.xyz",
-            "https://google.com"
-        )
+        private val validUrls =
+            listOf(
+                "https://example.com",
+                "http://abc.xyz",
+                "https://google.com",
+            )
 
         @Container
         @JvmStatic
-        val postgres = PostgreSQLContainer("postgres:16").apply {
-            withDatabaseName("jobs")
-            withUsername("jobs")
-            withPassword("jobs")
-        }
+        val postgres =
+            PostgreSQLContainer("postgres:16").apply {
+                withDatabaseName("jobs")
+                withUsername("jobs")
+                withPassword("jobs")
+            }
     }
 
     private lateinit var dataSource: DataSource
@@ -47,9 +51,10 @@ class PageRepositoryTest {
     @BeforeAll
     fun setup() {
         val rawSchema = File(DB_SCHEMA_PATH).readText()
-        val cleanedSchema = rawSchema.lines()
-            .filterNot { it.startsWith("\\") }
-            .joinToString("\n")
+        val cleanedSchema =
+            rawSchema.lines()
+                .filterNot { it.startsWith("\\") }
+                .joinToString("\n")
 
         postgres.createConnection("").use { conn ->
             conn.createStatement().use { statement ->
@@ -57,12 +62,13 @@ class PageRepositoryTest {
             }
         }
 
-        val config = HikariConfig().apply {
-            jdbcUrl = postgres.jdbcUrl
-            username = postgres.username
-            password = postgres.password
-            maximumPoolSize = 2
-        }
+        val config =
+            HikariConfig().apply {
+                jdbcUrl = postgres.jdbcUrl
+                username = postgres.username
+                password = postgres.password
+                maximumPoolSize = 2
+            }
 
         dataSource = HikariDataSource(config)
         jobRepository = JobRepository(dataSource)
@@ -131,7 +137,7 @@ class PageRepositoryTest {
         pageRepository.insertDiscovered(
             job.id,
             listOf("https://youtube.com", "http://test.com"),
-            1
+            1,
         )
 
         dataSource.connection.use { conn ->
@@ -220,10 +226,12 @@ class PageRepositoryTest {
         pageRepository.seedPages(job.id, listOf("https://example.com"))
         pageRepository.claimNextPage(job.id)
         dataSource.connection.use { conn ->
-            conn.createStatement().executeUpdate("""
+            conn.createStatement().executeUpdate(
+                """
                 UPDATE pages
                 SET claimed_at = NOW() - INTERVAL '31 seconds'
-            """.trimIndent())
+                """.trimIndent(),
+            )
         }
 
         pageRepository.reclaimStalePages()
@@ -252,7 +260,8 @@ class PageRepositoryTest {
 
     private fun seedJobRequest() {
         dataSource.connection.use { conn ->
-            conn.createStatement().execute("""
+            conn.createStatement().execute(
+                """
                 INSERT INTO jobs (id, status, seed_urls, max_depth)
                 VALUES (
                     gen_random_uuid(),
@@ -260,7 +269,8 @@ class PageRepositoryTest {
                     '["https://example.com"]',
                     1
                 )
-            """.trimIndent())
+                """.trimIndent(),
+            )
         }
     }
 }
