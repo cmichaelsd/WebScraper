@@ -6,6 +6,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.example.di.appModule
 import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
 import org.koin.java.KoinJavaComponent.getKoin
 import org.slf4j.LoggerFactory
 import org.webscraper.services.JobService
@@ -31,6 +32,7 @@ fun main(): Unit =
                 logger.info("Shutdown signal received")
                 shuttingDown = true
                 this.cancel()
+                stopKoin()
             },
         )
 

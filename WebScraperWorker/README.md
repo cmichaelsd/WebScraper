@@ -22,5 +22,5 @@ meaning if 5 separate jobs process the same domain there will be at minimum a de
 `./gradlew test clean`
 
 ## How to lint
-- `.gradlew ktlintCheck`
-- `.gradlew ktlintFormat`
+- `./gradlew ktlintCheck`
+- `./gradlew ktlintFormat`

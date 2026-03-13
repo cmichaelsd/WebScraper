@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.koin.test.KoinTest
 import org.webscraper.services.RobotsService
+import org.webscraper.util.RulesCache
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -32,7 +33,8 @@ class RobotsServiceTest : KoinTest {
                 }
 
             val client = HttpClient(mockEngine)
-            val service = RobotsService(client)
+            val rulesCache = RulesCache()
+            val service = RobotsService(client, rulesCache)
             val result = service.isAllowed("https://example.com/page")
 
             assertTrue(result)
@@ -55,7 +57,8 @@ class RobotsServiceTest : KoinTest {
                 }
 
             val client = HttpClient(mockEngine)
-            val service = RobotsService(client)
+            val rulesCache = RulesCache()
+            val service = RobotsService(client, rulesCache)
             val result = service.isAllowed("https://example.com/admin")
 
             assertFalse(result)
@@ -79,7 +82,8 @@ class RobotsServiceTest : KoinTest {
                 }
 
             val client = HttpClient(mockEngine)
-            val service = RobotsService(client)
+            val rulesCache = RulesCache()
+            val service = RobotsService(client, rulesCache)
             val result = service.getCrawlDelay("https://example.com/admin")
 
             assertEquals(5, result)
@@ -102,7 +106,8 @@ class RobotsServiceTest : KoinTest {
                 }
 
             val client = HttpClient(mockEngine)
-            val service = RobotsService(client)
+            val rulesCache = RulesCache()
+            val service = RobotsService(client, rulesCache)
             val result = service.getCrawlDelay("https://example.com/admin")
 
             assertNull(result)
