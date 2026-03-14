@@ -15,6 +15,13 @@ When a client creates a job, a job id is returned, with this job id a client can
 2) `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`
 3) Open the WebScraperWorker project and follow local running instructions (if not already done)
 
+## How to push docker image to AWS ECR
+1) `aws ecr get-login-password --region us-west-1 | docker login --username AWS --password-stdin 657083456388.dkr.ecr.us-west-1.amazonaws.com`
+2) `docker build -t webscraper-api .`
+3) `docker tag webscraper-api:latest 657083456388.dkr.ecr.us-west-1.amazonaws.com/webscraper/api:latest`
+4) `docker push 657083456388.dkr.ecr.us-west-1.amazonaws.com/webscraper/api:latest`
+
+
 ## How to inspect local DB
 `docker exec -it job-db -U jobs -d jobs`
 
