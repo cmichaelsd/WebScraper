@@ -1,4 +1,4 @@
-package org.webscraper.util
+package org.webscraper.util.models
 
 import kotlinx.coroutines.sync.Mutex
 

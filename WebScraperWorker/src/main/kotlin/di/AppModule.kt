@@ -13,6 +13,8 @@ import org.webscraper.services.JobService
 import org.webscraper.services.RobotsService
 import org.webscraper.util.RulesCache
 import javax.sql.DataSource
+import org.webscraper.util.DomainLimiter
+import org.webscraper.util.UrlHelper
 
 val appModule =
     module {
@@ -44,6 +46,14 @@ val appModule =
         }
 
         single {
+            DomainLimiter(robotsService = get())
+        }
+
+        single {
+            UrlHelper()
+        }
+
+        single {
             RulesCache()
         }
 
@@ -58,6 +68,8 @@ val appModule =
             CrawlerService(
                 robotsService = get(),
                 client = get(),
+                domainLimiter = get(),
+                urlHelper = get()
             )
         }
     }

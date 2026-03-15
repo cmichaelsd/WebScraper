@@ -6,26 +6,20 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.withLock
-import org.webscraper.util.DomainThrottle
-import java.net.URI
-import java.util.concurrent.ConcurrentHashMap
+import org.webscraper.util.DomainLimiter
+import org.webscraper.util.UrlHelper
 
 class CrawlerService(
     private val robotsService: RobotsService,
     private val client: HttpClient,
-    private val clock: () -> Long = { System.currentTimeMillis() },
+    private val domainLimiter: DomainLimiter,
+    private val urlHelper: UrlHelper
 ) {
     companion object {
-        private const val DOMAIN_DELAY_MS = 2000L
         private const val MAX_RETRIES = 5
         private const val INITIAL_BACK_OFF_MS = 2000L
         private const val MAX_BACKOFF_MS = 60_000L
-        private const val MAX_DOMAIN_ENTRIES = 5000
-        private const val DOMAIN_EVICT_AGE_MS = 300_000L // 5 minutes
     }
-
-    private val domainLimiters = ConcurrentHashMap<String, DomainThrottle>()
 
     suspend fun crawlSingle(
         url: String,
@@ -41,7 +35,7 @@ class CrawlerService(
 
         while (attempt < MAX_RETRIES) {
             try {
-                throttleDomain(url)
+                domainLimiter.throttleDomain(url)
 
                 val response: HttpResponse = client.get(url)
 
@@ -60,7 +54,7 @@ class CrawlerService(
                 }
 
                 val html = response.bodyAsText()
-                return extractLinks(html, url)
+                return urlHelper.extractLinks(html, url)
             } catch (e: Exception) {
                 delay(backoff.coerceAtMost(MAX_BACKOFF_MS))
                 backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
@@ -69,69 +63,5 @@ class CrawlerService(
         }
 
         return emptyList()
-    }
-
-    private suspend fun throttleDomain(url: String) {
-        val domain = URI(url).host ?: return
-
-        if (domainLimiters.size > MAX_DOMAIN_ENTRIES) {
-            val cutoff = clock() - DOMAIN_EVICT_AGE_MS
-            domainLimiters.entries.removeIf { it.value.lastRequestTime < cutoff }
-        }
-
-        val limiter =
-            domainLimiters.computeIfAbsent(domain) {
-                DomainThrottle()
-            }
-
-        limiter.mutex.withLock {
-            val crawlDelaySeconds = robotsService.getCrawlDelay(url)
-            val effectiveDelay = (crawlDelaySeconds?.times(1000)) ?: DOMAIN_DELAY_MS
-
-            val now = clock()
-            val elapsed = now - limiter.lastRequestTime
-
-            if (elapsed < effectiveDelay) {
-                delay(effectiveDelay - elapsed)
-            }
-
-            limiter.lastRequestTime = clock()
-        }
-    }
-
-    private fun extractLinks(
-        html: String,
-        baseUrl: String,
-    ): List<String> {
-        val base = URI(baseUrl)
-        val regex = Regex("""href=["']([^"']+)["']""")
-        return regex.findAll(html)
-            .map { it.groupValues[1].substringBefore('#') }
-            .filter { it.isNotBlank() }
-            .mapNotNull { href ->
-                try {
-                    val resolved = base.resolve(href)
-                    if (resolved.scheme in listOf("http", "https")) {
-                        normalizeUrl(resolved)
-                    } else {
-                        null
-                    }
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            .distinct()
-            .toList()
-    }
-
-    private fun normalizeUrl(uri: URI): String {
-        val path = uri.path.trimEnd('/').ifEmpty { "/" }
-        return URI(
-            uri.scheme.lowercase(),
-            uri.authority?.lowercase(),
-            path,
-            uri.query,
-            null,
-        ).toString()
     }
 }
