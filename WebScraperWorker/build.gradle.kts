@@ -59,5 +59,5 @@ tasks.test {
 }
 
 application {
-    mainClass.set("org.example.MainKt")
+    mainClass.set("org.webscraper.MainKt")
 }
