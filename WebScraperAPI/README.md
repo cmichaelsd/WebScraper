@@ -19,6 +19,10 @@ When a client creates a job, a job id is returned, with this job id a client can
 3) Open the WebScraperWorker project and follow local running instructions (if not already done)
 
 
+## How to test
+`python3 -m pytest`
+
+
 ## How to push docker image to AWS ECR
 1) `aws ecr get-login-password --region us-west-1 | docker login --username AWS --password-stdin 657083456388.dkr.ecr.us-west-1.amazonaws.com`
 2) `docker build -t webscraper-api .`

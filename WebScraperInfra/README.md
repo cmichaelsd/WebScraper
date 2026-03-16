@@ -13,6 +13,7 @@ This project essentially creates scalable API and worker instances. API is publi
 5) Apply named plan to AWS `terraform apply tfplan`
 6) When done run `terraform destory`
 
+
 ## How to access deployed application
 1) Sign-in to AWS
 2) Navigate to EC2
