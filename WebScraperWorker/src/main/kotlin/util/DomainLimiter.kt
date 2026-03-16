@@ -1,16 +1,15 @@
 package org.webscraper.util
 
-import java.net.URI
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withLock
 import org.webscraper.services.RobotsService
 import org.webscraper.util.models.DomainThrottle
-
+import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 
 class DomainLimiter(
     private val robotsService: RobotsService,
-    private val clock: () -> Long = { System.currentTimeMillis() }
+    private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
     companion object {
         private const val DOMAIN_DELAY_MS = 2000L

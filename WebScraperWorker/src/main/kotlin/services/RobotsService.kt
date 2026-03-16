@@ -6,8 +6,8 @@ import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
-import org.webscraper.util.models.RobotsRules
 import org.webscraper.util.RulesCache
+import org.webscraper.util.models.RobotsRules
 import java.net.URI
 
 class RobotsService(

@@ -13,7 +13,7 @@ class CrawlerService(
     private val robotsService: RobotsService,
     private val client: HttpClient,
     private val domainLimiter: DomainLimiter,
-    private val urlHelper: UrlHelper
+    private val urlHelper: UrlHelper,
 ) {
     companion object {
         private const val MAX_RETRIES = 5

@@ -16,6 +16,8 @@ import javax.sql.DataSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @Testcontainers
@@ -24,7 +26,6 @@ class PageRepositoryTest {
     companion object {
         private const val DB_SCHEMA_PATH = "src/test/resources/schema.sql"
         private const val WORKER_ID = "worker-1"
-        private const val OTHER_WORKER_ID = "worker-2"
         private const val RESULT_SET_STATUS_KEY = "status"
 
         private val validUrls =
@@ -83,25 +84,35 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `seedPages inserts new pages into pages table`() {
+    fun `seedPages inserts seed URLs into pages table at depth 0`() {
         seedJobRequest()
-
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
 
         dataSource.connection.use { conn ->
-            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages")
+            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages WHERE depth = 0")
             resultSet.next()
-
-            // Get value of first returned row.
             assertEquals(3, resultSet.getInt(1))
         }
     }
 
     @Test
-    fun `claimNextPage transitions statues PENDING to RUNNING when job id matches`() {
+    fun `seedPages does not insert duplicate URLs`() {
         seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, validUrls)
+        pageRepository.seedPages(job.id, validUrls)
 
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT COUNT(*) FROM pages")
+            resultSet.next()
+            assertEquals(3, resultSet.getInt(1))
+        }
+    }
+
+    @Test
+    fun `claimNextPage transitions status from PENDING to RUNNING`() {
+        seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
         pageRepository.claimNextPage(job.id)
@@ -114,9 +125,58 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `insertDiscovered does not add urls into pages when urls have been seen by current job`() {
+    fun `claimNextPage returns the page with URL and depth`() {
         seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
 
+        val page = pageRepository.claimNextPage(job.id)!!
+        assertNotNull(page.id)
+        assertEquals("https://example.com", page.url)
+        assertEquals(0, page.depth)
+    }
+
+    @Test
+    fun `claimNextPage returns null when no PENDING pages exist`() {
+        seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+
+        val page = pageRepository.claimNextPage(job.id)
+        assertNull(page)
+    }
+
+    @Test
+    fun `claimNextPage returns pages in BFS order (lower depth first)`() {
+        seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        pageRepository.insertDiscovered(job.id, listOf("https://example.com/deep"), 1)
+
+        // Claim and complete the depth-0 page so it's out of the way
+        val firstPage = pageRepository.claimNextPage(job.id)!!
+        assertEquals(0, firstPage.depth)
+        pageRepository.markCompleted(firstPage.id)
+
+        val secondPage = pageRepository.claimNextPage(job.id)!!
+        assertEquals(1, secondPage.depth)
+    }
+
+    @Test
+    fun `claimNextPage only claims pages for the specified job`() {
+        seedJobRequest()
+        seedJobRequest()
+        val job1 = jobRepository.claimJob(WORKER_ID)!!
+        val job2 = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job1.id, listOf("https://job1.com"))
+        pageRepository.seedPages(job2.id, listOf("https://job2.com"))
+
+        val page = pageRepository.claimNextPage(job1.id)!!
+        assertEquals("https://job1.com", page.url)
+    }
+
+    @Test
+    fun `insertDiscovered does not add URLs that are already in the job`() {
+        seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
         pageRepository.insertDiscovered(job.id, validUrls, 1)
@@ -129,9 +189,8 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `insertDiscovered add urls into pages when urls have not been seen by current job`() {
+    fun `insertDiscovered adds new URLs that have not been seen by the job`() {
         seedJobRequest()
-
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
         pageRepository.insertDiscovered(
@@ -148,42 +207,94 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `markComplete transitions status RUNNING to COMPLETE`() {
+    fun `insertDiscovered stores pages at the given depth`() {
         seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.insertDiscovered(job.id, listOf("https://example.com/page"), 2)
 
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT depth FROM pages WHERE url = 'https://example.com/page'")
+            resultSet.next()
+            assertEquals(2, resultSet.getInt("depth"))
+        }
+    }
+
+    @Test
+    fun `markCompleted transitions status from RUNNING to COMPLETED`() {
+        seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
         val page = pageRepository.claimNextPage(job.id)!!
+
         val result = pageRepository.markCompleted(page.id)
+
         assertTrue(result)
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT status FROM pages WHERE id = '${page.id}'")
+            resultSet.next()
+            assertEquals(Status.COMPLETED.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
     }
 
     @Test
-    fun `markFailed transitions status RUNNING to FAILED`() {
-        seedJobRequest()
+    fun `markCompleted returns false when page does not exist`() {
+        val result = pageRepository.markCompleted(java.util.UUID.randomUUID())
+        assertFalse(result)
+    }
 
+    @Test
+    fun `markFailed transitions status from RUNNING to FAILED`() {
+        seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
         val page = pageRepository.claimNextPage(job.id)!!
+
         val result = pageRepository.markFailed(page.id, null)
+
         assertTrue(result)
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT status FROM pages WHERE id = '${page.id}'")
+            resultSet.next()
+            assertEquals(Status.FAILED.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
     }
 
     @Test
-    fun `hasUnfinishedPages returns true when a job has pages of status PENDING or RUNNING`() {
+    fun `markFailed stores the error message`() {
         seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        pageRepository.seedPages(job.id, listOf("https://example.com"))
+        val page = pageRepository.claimNextPage(job.id)!!
 
+        pageRepository.markFailed(page.id, "connection refused")
+
+        dataSource.connection.use { conn ->
+            val resultSet = conn.createStatement().executeQuery("SELECT error FROM pages WHERE id = '${page.id}'")
+            resultSet.next()
+            assertEquals("connection refused", resultSet.getString("error"))
+        }
+    }
+
+    @Test
+    fun `markFailed returns false when page does not exist`() {
+        val result = pageRepository.markFailed(java.util.UUID.randomUUID(), null)
+        assertFalse(result)
+    }
+
+    @Test
+    fun `hasUnfinishedPages returns true when a job has PENDING or RUNNING pages`() {
+        seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, validUrls)
         pageRepository.claimNextPage(job.id)!!
+
         val result = pageRepository.hasUnfinishedPages(job.id)
         assertTrue(result)
     }
 
     @Test
-    fun `hasUnfinishedPages returns false when a job has no pages of status PENDING or RUNNING`() {
+    fun `hasUnfinishedPages returns false when a job has no PENDING or RUNNING pages`() {
         seedJobRequest()
-
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, listOf("https://example.com"))
         val page = pageRepository.claimNextPage(job.id)!!
@@ -194,9 +305,17 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `hasFailedPages returns true when a job has pages of status FAILED`() {
+    fun `hasUnfinishedPages returns false when a job has no pages`() {
         seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
 
+        val result = pageRepository.hasUnfinishedPages(job.id)
+        assertFalse(result)
+    }
+
+    @Test
+    fun `hasFailedPages returns true when a job has FAILED pages`() {
+        seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, listOf("https://example.com"))
         val page = pageRepository.claimNextPage(job.id)!!
@@ -207,9 +326,8 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `hasFailedPages returns false when a job has no pages of status FAILED`() {
+    fun `hasFailedPages returns false when a job has no FAILED pages`() {
         seedJobRequest()
-
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, listOf("https://example.com"))
         pageRepository.claimNextPage(job.id)!!
@@ -219,9 +337,8 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `reclaimStalePages transitions RUNNING to PENDING when claimed_at is 30 seconds from current time`() {
+    fun `reclaimStalePages transitions RUNNING to PENDING when claimed_at is older than 30 seconds`() {
         seedJobRequest()
-
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, listOf("https://example.com"))
         pageRepository.claimNextPage(job.id)
@@ -243,9 +360,8 @@ class PageRepositoryTest {
     }
 
     @Test
-    fun `reclaimStalePages does nothing when claimed_at is less than 30 seconds from now`() {
+    fun `reclaimStalePages does nothing when claimed_at is less than 30 seconds ago`() {
         seedJobRequest()
-
         val job = jobRepository.claimJob(WORKER_ID)!!
         pageRepository.seedPages(job.id, listOf("https://example.com"))
         pageRepository.claimNextPage(job.id)

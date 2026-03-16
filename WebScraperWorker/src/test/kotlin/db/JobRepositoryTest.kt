@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @Testcontainers
@@ -91,7 +92,29 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `completeJob transitions RUNNING to COMPLETE when job is owned by worker`() {
+    fun `claimJob returns null when no PENDING jobs exist`() {
+        val job = jobRepository.claimJob(WORKER_ID)
+        assertNull(job)
+    }
+
+    @Test
+    fun `claimJob returns correct seed URLs and maxDepth`() {
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute(
+                """
+                INSERT INTO jobs (id, status, seed_urls, max_depth)
+                VALUES (gen_random_uuid(), '${Status.PENDING.name}', '["https://example.com","https://other.com"]', 3)
+                """.trimIndent(),
+            )
+        }
+
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        assertEquals(listOf("https://example.com", "https://other.com"), job.seedUrls)
+        assertEquals(3, job.maxDepth)
+    }
+
+    @Test
+    fun `completeJob transitions RUNNING to COMPLETED when job is owned by worker`() {
         seedJobRequest()
 
         val job = jobRepository.claimJob(WORKER_ID)!!
@@ -119,7 +142,7 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `markFailed transitions RUNNING to PENDING when jobs attempt count is less than 3`() {
+    fun `markFailed transitions RUNNING to PENDING when attempt count is less than 3`() {
         seedJobRequest()
 
         val job = jobRepository.claimJob(WORKER_ID)
@@ -133,7 +156,7 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `markFailed does nothing when job is not currently claimed by a different worker`() {
+    fun `markFailed does nothing when called by a worker that does not own the job`() {
         seedJobRequest()
 
         val job = jobRepository.claimJob(WORKER_ID)!!
@@ -147,7 +170,7 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `markFailed transitions RUNNING to FAILED when jobs attempt count is greater than or equal to 3`() {
+    fun `markFailed transitions RUNNING to FAILED when attempt count reaches 3`() {
         seedJobRequest()
 
         repeat(3) {
@@ -163,7 +186,19 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `reclaimStaleJobs transitions RUNNING to PENDING when job has not been updated for 30 seconds`() {
+    fun `markFailed stores the error message`() {
+        seedJobRequest()
+        val job = jobRepository.claimJob(WORKER_ID)!!
+        jobRepository.markFailed(job.id, WORKER_ID, "timeout")
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, "SELECT last_error FROM jobs")
+            assertEquals("timeout", resultSet.getString("last_error"))
+        }
+    }
+
+    @Test
+    fun `reclaimStaleJobs transitions RUNNING to PENDING when heartbeat is older than 30 seconds`() {
         seedJobRequest()
 
         jobRepository.claimJob(WORKER_ID)
@@ -184,7 +219,49 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `updateHeartbeat updates heartbeat_at when worker owns job`() {
+    fun `reclaimStaleJobs does nothing when heartbeat is recent`() {
+        seedJobRequest()
+        jobRepository.claimJob(WORKER_ID)
+
+        jobRepository.reclaimStaleJobs()
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `reclaimStaleJobs does not reclaim RUNNING jobs with attempt count of 3 or more`() {
+        // A job in RUNNING state with attempt_count=3 can only be reached via direct DB state
+        // (e.g., data anomaly), so we seed it directly to verify the guard condition.
+        dataSource.connection.use { conn ->
+            conn.createStatement().execute(
+                """
+                INSERT INTO jobs (id, status, seed_urls, max_depth, attempt_count, claimed_by, heartbeat_at)
+                VALUES (
+                    gen_random_uuid(),
+                    '${Status.RUNNING.name}',
+                    '["https://example.com"]',
+                    1,
+                    3,
+                    '$WORKER_ID',
+                    NOW() - INTERVAL '31 seconds'
+                )
+                """.trimIndent(),
+            )
+        }
+
+        jobRepository.reclaimStaleJobs()
+
+        dataSource.connection.use { conn ->
+            val resultSet = getItemFromDB(conn, SELECT_STATUS_FROM_JOBS)
+            assertEquals(Status.RUNNING.name, resultSet.getString(RESULT_SET_STATUS_KEY))
+        }
+    }
+
+    @Test
+    fun `updateHeartbeat returns true when worker owns job`() {
         seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         val wasUpdated = jobRepository.updateHeartbeat(job.id, WORKER_ID)
@@ -192,7 +269,7 @@ class JobRepositoryTest {
     }
 
     @Test
-    fun `updateHeartbeat does not update heartbeat_at when worker does not own job`() {
+    fun `updateHeartbeat returns false when worker does not own job`() {
         seedJobRequest()
         val job = jobRepository.claimJob(WORKER_ID)!!
         val wasUpdated = jobRepository.updateHeartbeat(job.id, OTHER_WORKER_ID)

@@ -11,10 +11,10 @@ import org.webscraper.db.PageRepository
 import org.webscraper.services.CrawlerService
 import org.webscraper.services.JobService
 import org.webscraper.services.RobotsService
-import org.webscraper.util.RulesCache
-import javax.sql.DataSource
 import org.webscraper.util.DomainLimiter
+import org.webscraper.util.RulesCache
 import org.webscraper.util.UrlHelper
+import javax.sql.DataSource
 
 val appModule =
     module {
@@ -69,7 +69,7 @@ val appModule =
                 robotsService = get(),
                 client = get(),
                 domainLimiter = get(),
-                urlHelper = get()
+                urlHelper = get(),
             )
         }
     }

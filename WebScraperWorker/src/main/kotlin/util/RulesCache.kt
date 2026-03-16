@@ -1,9 +1,9 @@
 package org.webscraper.util
 
-import java.time.Duration
-import java.time.Instant
 import org.webscraper.util.models.CachedEntry
 import org.webscraper.util.models.RobotsRules
+import java.time.Duration
+import java.time.Instant
 
 class RulesCache {
     companion object {
