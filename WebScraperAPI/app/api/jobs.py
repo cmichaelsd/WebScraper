@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,8 @@ from app.api.schemas.job_response import JobResponse
 from app.db.models.job import Job
 from app.db.models.status import Status
 from app.db.session import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -27,6 +30,8 @@ async def create_job(
     await db.commit()
     await db.refresh(job)
 
+    logger.info("Job created: %s", job.id)
+
     return job
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -38,6 +43,7 @@ async def get_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
     job = result.scalar_one_or_none()
 
     if not job:
+        logger.warning("Job not found: %s", job_id)
         raise HTTPException(status_code=404, detail="Job not found")
 
     return job

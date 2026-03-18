@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,8 @@ from app.db.models import Job
 from app.db.session import get_db
 from app.db.models.page import Page
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/pages", tags=["pages"])
 
 
@@ -19,6 +22,7 @@ async def get_pages(job_id: UUID, db: AsyncSession = Depends(get_db)):
     )
 
     if not job.scalar_one_or_none():
+        logger.warning("Job not found: %s", job_id)
         raise HTTPException(status_code=404, detail="Job not found")
 
     result = await db.execute(
