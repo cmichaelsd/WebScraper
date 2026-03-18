@@ -1,3 +1,5 @@
+# ── Application Load Balancer ─────────────────────────────────────────────────
+
 resource "aws_lb" "this" {
   name               = "${var.project_name}-alb"
   load_balancer_type = "application"
@@ -6,6 +8,8 @@ resource "aws_lb" "this" {
 
   enable_deletion_protection = false
 }
+
+# ── Target Group ──────────────────────────────────────────────────────────────
 
 resource "aws_lb_target_group" "api" {
   name        = "${var.project_name}-api-tg"
@@ -24,6 +28,8 @@ resource "aws_lb_target_group" "api" {
   }
 }
 
+# ── Listener ──────────────────────────────────────────────────────────────────
+
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
@@ -34,6 +40,9 @@ resource "aws_lb_listener" "http" {
     target_group_arn = aws_lb_target_group.api.arn
   }
 }
+
+# ── WAF ───────────────────────────────────────────────────────────────────────
+# Rate limits to 50 requests per IP per evaluation period.
 
 resource "aws_wafv2_web_acl" "api" {
   name        = "${var.project_name}-waf"

@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webscraper-api
+  namespace: webscraper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webscraper-api
+  template:
+    metadata:
+      labels:
+        app: webscraper-api
+    spec:
+      serviceAccountName: webscraper-sa
+      containers:
+        - name: api
+          image: 657083456388.dkr.ecr.us-west-1.amazonaws.com/webscraper/api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DATABASE_URL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webscraper-api
+  namespace: webscraper
+spec:
+  type: LoadBalancer
+  selector:
+    app: webscraper-api
+  ports:
+    - port: 80
+      targetPort: 8000

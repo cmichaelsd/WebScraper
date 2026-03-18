@@ -1,3 +1,6 @@
+# ── API Security Group ────────────────────────────────────────────────────────
+# Accepts traffic on port 8000 from the ALB only.
+
 resource "aws_security_group" "api" {
   name   = "${var.project_name}-api-sg"
   vpc_id = var.vpc_id
@@ -17,11 +20,12 @@ resource "aws_security_group" "api" {
   }
 }
 
+# ── Worker Security Group ─────────────────────────────────────────────────────
+# Egress only — the worker pulls jobs from the DB, nothing connects to it.
+
 resource "aws_security_group" "worker" {
   name   = "${var.project_name}-worker-sg"
   vpc_id = var.vpc_id
-
-  # No ingress rules
 
   egress {
     from_port   = 0
@@ -30,6 +34,9 @@ resource "aws_security_group" "worker" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
+# ── RDS Security Group ────────────────────────────────────────────────────────
+# Accepts postgres traffic from the API and worker only.
 
 resource "aws_security_group" "rds" {
   name   = "${var.project_name}-rds-sg"
@@ -52,6 +59,9 @@ resource "aws_security_group" "rds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
+# ── ALB Security Group ────────────────────────────────────────────────────────
+# Accepts public HTTP traffic on port 80.
 
 resource "aws_security_group" "alb" {
   name   = "${var.project_name}-alb-sg"

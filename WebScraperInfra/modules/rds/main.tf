@@ -1,3 +1,5 @@
+# ── Subnet Group ─────────────────────────────────────────────────────────────
+
 resource "aws_db_subnet_group" "this" {
   name = "${var.project_name}-db-subnet-group"
 
@@ -8,10 +10,16 @@ resource "aws_db_subnet_group" "this" {
   }
 }
 
+# ── Password ──────────────────────────────────────────────────────────────────
+# Excludes characters not allowed by RDS: / @ " and space.
+
 resource "random_password" "db" {
-  length  = 16
-  special = true
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>?"
 }
+
+# ── RDS Instance ──────────────────────────────────────────────────────────────
 
 resource "aws_db_instance" "this" {
   identifier        = "${var.project_name}-db"
@@ -36,8 +44,12 @@ resource "aws_db_instance" "this" {
   }
 }
 
+# ── Secrets Manager ───────────────────────────────────────────────────────────
+# Stores DB credentials for use by EKS pods via IRSA.
+
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name = "${var.project_name}-db-credentials"
+  name                    = "${var.project_name}-db-credentials"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "db_credentials" {

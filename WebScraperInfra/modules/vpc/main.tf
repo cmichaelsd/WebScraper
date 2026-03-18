@@ -1,6 +1,10 @@
+# ── Availability Zones ───────────────────────────────────────────────────────
+
 data "aws_availability_zones" "available" {
   state = "available"
 }
+
+# ── VPC ──────────────────────────────────────────────────────────────────────
 
 resource "aws_vpc" "this" {
   cidr_block           = "10.0.0.0/16"
@@ -12,6 +16,8 @@ resource "aws_vpc" "this" {
   }
 }
 
+# ── Internet Gateway ──────────────────────────────────────────────────────────
+
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
 
@@ -20,6 +26,8 @@ resource "aws_internet_gateway" "this" {
   }
 }
 
+# ── Public Subnets ────────────────────────────────────────────────────────────
+
 resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.this.id
   cidr_block              = "10.0.1.0/24"
@@ -27,18 +35,9 @@ resource "aws_subnet" "public_a" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.project_name}-public_a"
-  }
-}
-
-resource "aws_subnet" "private_a" {
-  vpc_id                  = aws_vpc.this.id
-  cidr_block              = "10.0.10.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "${var.project_name}-private_a"
+    Name                                        = "${var.project_name}-public_a"
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 
@@ -49,7 +48,24 @@ resource "aws_subnet" "public_b" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.project_name}-public_b"
+    Name                                        = "${var.project_name}-public_b"
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+  }
+}
+
+# ── Private Subnets ───────────────────────────────────────────────────────────
+
+resource "aws_subnet" "private_a" {
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = "10.0.10.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name                                        = "${var.project_name}-private_a"
+    "kubernetes.io/role/internal-elb"           = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 
@@ -60,9 +76,13 @@ resource "aws_subnet" "private_b" {
   map_public_ip_on_launch = false
 
   tags = {
-    Name = "${var.project_name}-private_b"
+    Name                                        = "${var.project_name}-private_b"
+    "kubernetes.io/role/internal-elb"           = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
+
+# ── NAT Gateway ───────────────────────────────────────────────────────────────
 
 resource "aws_eip" "nat" {
   domain = "vpc"
@@ -82,6 +102,8 @@ resource "aws_nat_gateway" "this" {
 
   depends_on = [aws_internet_gateway.this]
 }
+
+# ── Route Tables ──────────────────────────────────────────────────────────────
 
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
@@ -108,6 +130,8 @@ resource "aws_route_table" "private" {
     Name = "${var.project_name}-private-rt"
   }
 }
+
+# ── Route Table Associations ──────────────────────────────────────────────────
 
 resource "aws_route_table_association" "public_a" {
   subnet_id      = aws_subnet.public_a.id
