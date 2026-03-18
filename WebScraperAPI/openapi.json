@@ -327,15 +327,22 @@
             "type": "string",
             "title": "Status"
           },
-          "discovered_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Discovered At"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed At"
           },
           "error": {
             "anyOf": [
@@ -356,8 +363,8 @@
           "url",
           "depth",
           "status",
-          "discovered_at",
           "created_at",
+          "claimed_at",
           "error"
         ],
         "title": "PageResponse"
