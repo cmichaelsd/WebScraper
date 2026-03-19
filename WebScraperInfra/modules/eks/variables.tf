@@ -38,3 +38,7 @@ variable "db_secret_arn" {
 variable "rds_sg_id" {
   type = string
 }
+
+variable "alb_sg_id" {
+  type = string
+}

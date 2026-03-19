@@ -23,13 +23,16 @@ Instead of remembering a bunch of complicated commands just look in the Makefile
 
 
 ## How to setup remote on AWS
-- After following the instruction in WebScraperInfra run `make k8s-aws-deploy`
-- For accessing in browser `make k8s-aws-url` then navigate to /docs
+1. Run `terraform apply` inside `WebScraperInfra` (provisions infra + k8s bootstrap resources)
+2. Run `make k8s-aws-deploy` to deploy the API and worker
+3. For the API endpoint run `make k8s-aws-url` then navigate to /docs
 
 
 ## Requirements
 - awscli
 - docker
 - docker-compose
+- helm
 - minikube
 - kubectl
+- terraform

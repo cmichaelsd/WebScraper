@@ -15,7 +15,12 @@ This project essentially creates scalable API and worker instances. API is publi
 
 
 ## How to access deployed application
-1) Sign-in to AWS
-2) Navigate to EC2
-3) Find Load Balancers and select webscraper-alb
-4) Navigate to the DNS name at /docs like this: webscraper-alb-<hash>.us-west-1.elb.amazonaws.com
+Run `terraform output alb_dns_name` to get the ALB endpoint, then navigate to `/docs`.
+
+
+## First-time setup note
+On a brand-new deployment the EKS cluster must exist before the Helm/kubectl providers
+can connect to it. Bootstrap with:
+
+    terraform apply -target=module.eks
+    terraform apply

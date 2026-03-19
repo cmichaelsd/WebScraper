@@ -14,6 +14,10 @@ output "pod_role_arn" {
   value = aws_iam_role.pods.arn
 }
 
+output "lbc_role_arn" {
+  value = aws_iam_role.lbc.arn
+}
+
 output "api_database_url" {
   value     = local.asyncpg_url
   sensitive = true

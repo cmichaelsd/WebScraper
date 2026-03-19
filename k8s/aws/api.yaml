@@ -39,9 +39,9 @@ metadata:
   name: webscraper-api
   namespace: webscraper
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: webscraper-api
   ports:
-    - port: 80
+    - port: 8000
       targetPort: 8000
