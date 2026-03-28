@@ -7,6 +7,7 @@ This project is broken into three portions.
 2) Worker - Kotlin application which pulls from the PSQL queue and processes the submitted jobs.
 3) Infra - Terraform project used to setup infra required to support this project.
 
+![Diagram of service](./diagram.svg)
 
 ## K8S
 This project originally just used Docker but has since refactored to using Kubernetes. The K8S folder lives at root of this project and can be interacted with via the Makefile.

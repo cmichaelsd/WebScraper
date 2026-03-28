@@ -24,3 +24,8 @@ can connect to it. Bootstrap with:
 
     terraform apply -target=module.eks
     terraform apply
+
+The first command may fail at the node group creation with `NodeCreationFailure` — this
+is expected. The `-target` flag only partially builds the VPC, skipping the NAT gateway
+that nodes need to join the cluster. The second `terraform apply` creates the missing
+resources and brings the node group up successfully.

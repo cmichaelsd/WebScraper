@@ -59,7 +59,7 @@ resource "aws_iam_role_policy_attachment" "nodes_ecr" {
 resource "aws_eks_cluster" "this" {
   name     = var.project_name
   role_arn = aws_iam_role.cluster.arn
-  version  = "1.30"
+  version  = "1.33"
 
   vpc_config {
     subnet_ids              = concat(var.private_subnet_ids, var.public_subnet_ids)
