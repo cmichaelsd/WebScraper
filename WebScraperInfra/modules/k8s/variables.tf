@@ -22,21 +22,6 @@ variable "target_group_arn" {
   type = string
 }
 
-variable "api_database_url" {
-  type      = string
-  sensitive = true
-}
-
-variable "jdbc_url" {
-  type      = string
-  sensitive = true
-}
-
-variable "db_username" {
+variable "connection_secret_arn" {
   type = string
-}
-
-variable "db_password" {
-  type      = string
-  sensitive = true
 }

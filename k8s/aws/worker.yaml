@@ -14,10 +14,21 @@ spec:
         app: webscraper-worker
     spec:
       serviceAccountName: webscraper-sa
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: webscraper-secrets
       containers:
         - name: worker
           image: 657083456388.dkr.ecr.us-west-1.amazonaws.com/webscraper/worker:latest
           imagePullPolicy: Always
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
           env:
             - name: JDBC_URL
               valueFrom:

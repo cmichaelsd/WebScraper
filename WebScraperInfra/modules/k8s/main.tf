@@ -1,3 +1,73 @@
+# ── Secrets Store CSI Driver ──────────────────────────────────────────────────
+# Mounts Secrets Manager values into pods and syncs them to a K8s Secret so
+# existing secretKeyRef env vars continue to work without modification.
+
+resource "helm_release" "csi_secrets_store" {
+  name       = "csi-secrets-store"
+  repository = "https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts"
+  chart      = "secrets-store-csi-driver"
+  namespace  = "kube-system"
+  version    = "1.4.8"
+
+  set {
+    name  = "syncSecret.enabled"
+    value = "true"
+  }
+}
+
+resource "helm_release" "aws_secrets_provider" {
+  name       = "secrets-provider-aws"
+  repository = "https://aws.github.io/secrets-store-csi-driver-provider-aws"
+  chart      = "secrets-store-csi-driver-provider-aws"
+  namespace  = "kube-system"
+  version    = "0.3.9"
+
+  depends_on = [helm_release.csi_secrets_store]
+}
+
+# ── SecretProviderClass ───────────────────────────────────────────────────────
+# Pulls all four connection values from the consolidated Secrets Manager secret
+# and syncs them into a K8s Secret named db-credentials.
+
+resource "kubectl_manifest" "secret_provider_class" {
+  yaml_body = <<-YAML
+    apiVersion: secrets-store.csi.x-k8s.io/v1
+    kind: SecretProviderClass
+    metadata:
+      name: webscraper-secrets
+      namespace: webscraper
+    spec:
+      provider: aws
+      parameters:
+        objects: |
+          - objectName: "${var.connection_secret_arn}"
+            objectType: secretsmanager
+            jmesPath:
+              - path: DATABASE_URL
+                objectAlias: DATABASE_URL
+              - path: JDBC_URL
+                objectAlias: JDBC_URL
+              - path: DB_USER
+                objectAlias: DB_USER
+              - path: DB_PASSWORD
+                objectAlias: DB_PASSWORD
+      secretObjects:
+        - secretName: db-credentials
+          type: Opaque
+          data:
+            - objectName: DATABASE_URL
+              key: DATABASE_URL
+            - objectName: JDBC_URL
+              key: JDBC_URL
+            - objectName: DB_USER
+              key: DB_USER
+            - objectName: DB_PASSWORD
+              key: DB_PASSWORD
+  YAML
+
+  depends_on = [helm_release.aws_secrets_provider, kubectl_manifest.namespace]
+}
+
 # ── AWS Load Balancer Controller ──────────────────────────────────────────────
 # Installs the controller into kube-system via Helm. The controller provides
 # the TargetGroupBinding CRD that wires pod IPs into the Terraform-managed
@@ -64,27 +134,6 @@ resource "kubectl_manifest" "service_account" {
       namespace: webscraper
       annotations:
         eks.amazonaws.com/role-arn: ${var.pod_role_arn}
-  YAML
-
-  depends_on = [kubectl_manifest.namespace]
-}
-
-# ── DB Credentials Secret ─────────────────────────────────────────────────────
-# Kubernetes secret referenced by both the api and worker pods.
-
-resource "kubectl_manifest" "db_credentials" {
-  yaml_body = <<-YAML
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: db-credentials
-      namespace: webscraper
-    type: Opaque
-    data:
-      DATABASE_URL: ${base64encode(var.api_database_url)}
-      JDBC_URL: ${base64encode(var.jdbc_url)}
-      DB_USER: ${base64encode(var.db_username)}
-      DB_PASSWORD: ${base64encode(var.db_password)}
   YAML
 
   depends_on = [kubectl_manifest.namespace]

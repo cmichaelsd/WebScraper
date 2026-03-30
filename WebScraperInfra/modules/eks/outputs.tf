@@ -18,12 +18,6 @@ output "lbc_role_arn" {
   value = aws_iam_role.lbc.arn
 }
 
-output "api_database_url" {
-  value     = local.asyncpg_url
-  sensitive = true
-}
-
-output "jdbc_url" {
-  value     = local.jdbc_url
-  sensitive = true
+output "connection_secret_arn" {
+  value = aws_secretsmanager_secret.connection.arn
 }

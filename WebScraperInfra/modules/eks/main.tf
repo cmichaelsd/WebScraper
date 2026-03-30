@@ -137,21 +137,28 @@ resource "aws_iam_role_policy" "pods_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = "secretsmanager:GetSecretValue"
-      Resource = [var.db_secret_arn, aws_secretsmanager_secret.api_database_url.arn]
+      Resource = [aws_secretsmanager_secret.connection.arn]
     }]
   })
 }
 
-# ── Secrets Manager: API Database URL ────────────────────────────────────────
+# ── Secrets Manager: Connection Credentials ───────────────────────────────────
+# Single secret containing all values pods need — synced into a K8s Secret
+# by the Secrets Store CSI driver at pod startup.
 
-resource "aws_secretsmanager_secret" "api_database_url" {
-  name                    = "${var.project_name}-api-database-url"
+resource "aws_secretsmanager_secret" "connection" {
+  name                    = "${var.project_name}-connection"
   recovery_window_in_days = 0
 }
 
-resource "aws_secretsmanager_secret_version" "api_database_url" {
-  secret_id     = aws_secretsmanager_secret.api_database_url.id
-  secret_string = local.asyncpg_url
+resource "aws_secretsmanager_secret_version" "connection" {
+  secret_id = aws_secretsmanager_secret.connection.id
+  secret_string = jsonencode({
+    DATABASE_URL = local.asyncpg_url
+    JDBC_URL     = local.jdbc_url
+    DB_USER      = var.db_username
+    DB_PASSWORD  = var.db_password
+  })
 }
 
 # ── AWS Load Balancer Controller IRSA ────────────────────────────────────────

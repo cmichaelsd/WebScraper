@@ -3,6 +3,15 @@
   <component name="ChangeListManager">
     <list default="true" id="13d794ee-c5e5-447b-ac16-2c425b86d44b" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/main.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/main.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/modules/eks/main.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/modules/eks/main.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/modules/eks/outputs.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/modules/eks/outputs.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/modules/eks/variables.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/modules/eks/variables.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/modules/k8s/main.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/modules/k8s/main.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/modules/k8s/variables.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/modules/k8s/variables.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/WebScraperInfra/outputs.tf" beforeDir="false" afterPath="$PROJECT_DIR$/WebScraperInfra/outputs.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/k8s/aws/api.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/k8s/aws/api.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/k8s/aws/worker.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/k8s/aws/worker.yaml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
