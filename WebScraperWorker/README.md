@@ -49,6 +49,14 @@ Crawl-delay if set):
 In practice, jobs will be well below those numbers due to network latency, backoff on 429s, and the robots.txt
 fetch overhead.
 
+### Hypothetical Ceiling (after infra fixes + shared throttle)
+| Metric               | Current                         | Scaled                            |             
+|----------------------|---------------------------------|-----------------------------------|
+| Concurrent jobs      | 1                               | 50                                |
+| Pages in flight      | 5                               | 1,000                             |                    
+| Sustained throughput | ~1,800 pages/hr (single domain) | ~2-3M pages/hr (many domains)     |                     
+| Domain throughput    | ~1,800/hr per domain            | Same, enforced globally via Redis |
+
 
 ## How to run locally
 1) Follow local run instructions for WebSCraperAPI first
