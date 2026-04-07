@@ -29,6 +29,13 @@ spec:
             - name: secrets-store
               mountPath: /mnt/secrets-store
               readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
           env:
             - name: JDBC_URL
               valueFrom:
